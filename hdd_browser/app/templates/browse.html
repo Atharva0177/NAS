@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Browse{% endblock %}
+
+{% block content %}
+<h2 class="page-title">Browse Files</h2>
+
+<div class="toolbar glass">
+  <div class="tool-group">
+    <label class="label-chip">Drive
+      <select id="driveSelect" class="input-select"></select>
+    </label>
+    <div class="path-display" id="currentPath"></div>
+    <button id="upBtn" class="btn-soft">Back ⬅️</button>
+    <button id="toggleViewBtn" data-mode="list" class="btn-soft">Grid View</button>
+
+    <!-- NEW: Sort selector -->
+    <label class="label-chip" style="margin-left:.5rem;">
+      Sort
+      <select id="sortSelect" class="input-select">
+        <option value="name" selected>Name (A→Z)</option>
+        <option value="type">File Type</option>
+      </select>
+    </label>
+  </div>
+
+  
+</div>
+
+<div id="entries" class="entries-surface list-mode skeleton-parent">
+  <!-- Skeleton placeholder -->
+  <div class="skeleton-block"></div>
+  <div class="skeleton-block w-70"></div>
+  <div class="skeleton-block w-50"></div>
+</div>
+
+<div id="preview" class="preview-panel"></div>
+
+<div id="uploadSection" style="display:none;" class="upload-panel glass">
+  <h3>Upload</h3>
+  <form id="uploadForm" class="upload-form">
+    <input type="file" name="file" class="input-file" />
+    <button type="submit" class="btn-primary">Upload</button>
+  </form>
+  <div id="uploadResult" class="upload-result"></div>
+</div>
+
+<!-- Legacy Lightbox (kept only if still referenced somewhere; otherwise can remove) -->
+<div id="lightbox" style="display:none;">
+  <div id="lightboxContent" class="lightbox-inner scale-in">
+    <button id="lightboxClose" class="lightbox-close" title="Close">&times;</button>
+    <img id="lightboxImage" alt="preview" />
+    <video id="lightboxVideo" controls style="display:none;"></video>
+    <div id="lightboxCaption"></div>
+    <div id="lightboxNav">
+      <button id="lbPrev" class="btn-circle" title="Previous">&#9664;</button>
+      <button id="lbNext" class="btn-circle" title="Next">&#9654;</button>
+    </div>
+  </div>
+</div>
+
+<!-- Media Lightbox Popup (not used by independent modal JS, kept if you revert) -->
+<!-- <div id="mediaLightbox" class="mlb-hidden" aria-modal="true" role="dialog">
+  <div class="mlb-backdrop" data-mlb-close></div>
+  <div class="mlb-shell" role="document">
+    <button class="mlb-close" title="Close (Esc)" data-mlb-close>&times;</button>
+    <div class="mlb-stage">
+      <img id="mlbImage" alt="" class="mlb-media mlb-hidden" />
+      <video id="mlbVideo" class="mlb-media mlb-hidden" controls playsinline></video>
+      <div id="mlbSpinner" class="mlb-spinner"></div>
+    </div>
+    <div class="mlb-footer">
+      <button id="mlbPrev" class="mlb-nav" aria-label="Previous">&#10094;</button>
+      <div class="mlb-caption" id="mlbCaption"></div>
+      <button id="mlbNext" class="mlb-nav" aria-label="Next">&#10095;</button>
+    </div>
+  </div>
+</div> -->
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const enableUpload = {{ settings.ENABLE_UPLOAD | tojson }};
+  const enableDelete = {{ settings.ENABLE_DELETE | tojson }};
+  const enableThumbs = {{ settings.ENABLE_THUMBNAILS | default(false) | tojson }};
+</script>
+<script src="/static/js/app.js"></script>
+{% endblock %}

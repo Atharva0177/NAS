@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+
+{% block extra_head %}
+  {# If base.html supports an 'extra_head' block, use this. Otherwise, move the <link> into the main content or add globally. #}
+  <link rel="stylesheet" href="/static/css/auth.css">
+{% endblock %}
+
+{% block content %}
+<div class="auth-bg">
+  <!-- Decorative backdrop or logo slot -->
+  <div class="auth-orb orb-a"></div>
+  <div class="auth-orb orb-b"></div>
+
+  <div class="auth-container">
+    <div class="auth-card" role="main" aria-labelledby="loginTitle">
+      <header class="auth-card-header">
+        <h1 id="loginTitle" class="auth-title">
+          <span class="auth-title-accent" aria-hidden="true"></span>
+          Sign In
+        </h1>
+        <p class="auth-subtitle">Access your drives securely.</p>
+      </header>
+
+      {% if error %}
+      <div class="auth-alert" role="alert" aria-live="assertive">
+        <div class="alert-ico" aria-hidden="true">⚠️</div>
+        <div class="alert-msg">{{ error }}</div>
+        <button class="alert-close" type="button" aria-label="Dismiss error" data-alert-close>&times;</button>
+      </div>
+      {% endif %}
+
+      <form id="loginForm" method="post" action="/auth/login" class="auth-form" autocomplete="on" novalidate>
+        <input type="hidden" name="next" value="{{ next | default('/') }}">
+        {% if csrf_token %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% endif %}
+
+        <div class="field-group">
+        <!-- <div class="field-icon" aria-hidden="true">👤</div> -->
+          <label for="username" class="field-label">👤 Username</label><br>
+          <!-- <small id="usernameHelp" class="field-hint">Use configured admin credentials.</small> -->
+          <div class="field-wrapper">
+            <input
+              type="text"
+              id="username"
+              name="username"
+              class="field-input"
+              placeholder="john_doe"
+              autocomplete="username"
+              required
+              value="{{ username or '' }}"
+              {% if not username %}autofocus{% endif %}
+              aria-describedby="usernameHelp"
+            >
+            <div class="field-focus-bar"></div>
+            
+          </div>
+          <br>
+          
+        </div>
+
+        <div class="field-group">
+          <label for="password" class="field-label">🔒Password</label>
+          <div class="field-wrapper password-wrapper">
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="field-input"
+              placeholder="••••••••"
+              autocomplete="current-password"
+              required
+              aria-describedby="pwHint pwCaps"
+            >
+            <button
+              type="button"
+              class="pw-toggle-btn"
+              id="pwToggle"
+              aria-label="Show password"
+              aria-pressed="false"
+            >
+              <span class="pw-toggle-icon show" aria-hidden="true">👁️</span>
+              <!-- <span class="pw-toggle-icon hide" aria-hidden="true">🙈</span> -->
+            </button>
+            <div class="field-focus-bar"></div>
+            <!-- <div class="field-icon" aria-hidden="true">🔒</div> -->
+          </div>
+          <div id="pwCaps" class="caps-indicator" role="status" aria-live="polite" hidden>Caps Lock is ON</div>
+          <!-- <small id="pwHint" class="field-hint">Never share this password.</small> -->
+        </div>
+        <br>
+
+        <!-- <div class="form-row options-row">
+            <label class="checkbox">
+              <input type="checkbox" name="remember" value="1">
+              <span>Remember me</span>
+            </label>
+            <a href="#" class="muted-link" onclick="return false;" aria-disabled="true">Forgot password?</a>
+        </div> -->
+
+        <button type="submit" id="submitBtn" class="btn btn-primary btn-block">
+          <span class="btn-label">Sign In</span>
+          <span class="btn-progress" aria-hidden="true">
+            <span class="dots"><i></i><i></i><i></i></span>
+          </span>
+        </button>
+
+        <!-- <div class="form-row extra-controls">
+          <label class="checkbox tiny">
+            <input type="checkbox" id="showPassword">
+            <span>Show password</span>
+          </label>
+        </div> -->
+      </form>
+
+      <footer class="auth-footer">
+        <p class="foot-note">
+          Session secured with HTTP-only cookies.
+          {% if settings %}
+            <span class="app-name-tag">{{ settings.APP_NAME }}</span>
+          {% endif %}
+        </p>
+      </footer>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/auth.js"></script>
+{% endblock %}

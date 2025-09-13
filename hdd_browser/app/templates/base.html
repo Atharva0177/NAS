@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <title>{% block title %}HDD Browser{% endblock %}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- You can swap for any modern font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // Theme bootstrap (prevents flash)
+    (function() {
+      const stored = localStorage.getItem("hdd-theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.setAttribute("data-theme", stored || (prefersDark ? "dark" : "light"));
+    })();
+  </script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div id="appRoot">
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-pulse"></div>
+        <span class="brand-text">Atharva's NAS</span>
+      </div>
+      <nav class="main-nav">
+        <a href="/" class="nav-link" data-active="{{ 'true' if request.url.path=='/' else 'false' }}">Home</a>
+        <a href="/browse" class="nav-link" data-active="{{ 'true' if request.url.path.startswith('/browse') else 'false' }}">Browse</a>
+        <a href="/search" class="nav-link" data-active="{{ 'true' if request.url.path.startswith('/search') else 'false' }}">Search</a>
+      </nav>
+      <div class="header-actions">
+        <button id="themeToggle" class="btn-ghost" title="Toggle Theme">
+          <span class="theme-icon light">🌙</span>
+          <span class="theme-icon dark">☀️</span>
+        </button>
+        {% if user %}
+        <form method="post" action="/auth/logout" class="logout-form">
+          <button class="btn-outline small">Logout ({{ user }})</button>
+        </form>
+        {% endif %}
+      </div>
+    </header>
+    <main class="main-shell">
+      <div class="panel-surface fade-in">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+    <footer class="app-footer">
+      <span>© {{ 2025 }} Atharva's NAS • Enhanced UI</span>
+      <span class="footer-meta">Optimized • Reactive • Themed</span>
+    </footer>
+  </div>
+
+  <div id="globalToasts" class="toast-container"></div>
+
+  <script src="/static/js/app.js" defer></script>
+  <script>
+    // Theme toggle logic
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = document.getElementById("themeToggle");
+      if (btn) {
+        btn.addEventListener("click", () => {
+          const html = document.documentElement;
+            const current = html.getAttribute("data-theme");
+            const next = current === "dark" ? "light" : "dark";
+            html.setAttribute("data-theme", next);
+            localStorage.setItem("hdd-theme", next);
+        });
+      }
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

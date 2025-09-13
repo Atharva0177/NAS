@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<h2 class="page-title">Search</h2>
+<div class="search-shell glass">
+  <form id="searchForm" class="search-form">
+    <div class="form-row">
+      <label>Drive
+        <select id="searchDrive" name="drive_id" class="input-select"></select>
+      </label>
+      <label>Query
+        <input type="text" name="query" required class="input-text" placeholder="Filename contains..." />
+      </label>
+      <label>Depth
+        <input type="number" name="depth" value="6" class="input-number" />
+      </label>
+      <label>Limit
+        <input type="number" name="limit" value="100" class="input-number" />
+      </label>
+      <button class="btn-primary" type="submit">Go</button>
+    </div>
+  </form>
+  <div id="searchResults" class="results-panel">
+    <div class="muted">Enter a query to begin.</div>
+  </div>
+</div>
+{% endblock %}

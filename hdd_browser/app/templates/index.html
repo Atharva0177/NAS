@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="hero">
+  <h1 class="gradient-text">Welcome</h1>
+  <p class="lead">Browse drives, preview media, and manage files with a refined, responsive interface.</p>
+  <div class="hero-actions">
+    <a href="/browse" class="btn-primary large">Open Browser</a>
+    <a href="/search" class="btn-soft large">Search Files</a>
+  </div>
+</div>
+<div class="feature-grid">
+  <div class="feature-card slide-up">
+    <h3>Media Ready</h3>
+    <p>Inline previews for images (HEIC too) and videos with streaming support.</p>
+  </div>
+  <div class="feature-card slide-up delay-1">
+    <h3>Thumbnails</h3>
+    <p>Responsive grid with animated hover, lazy loading, and lightbox viewer.</p>
+  </div>
+  <div class="feature-card slide-up delay-2">
+    <h3>Search</h3>
+    <p>Recursive search by name with adjustable depth and limits.</p>
+  </div>
+  <div class="feature-card slide-up delay-3">
+    <h3>Secure</h3>
+    <p>Session-based auth and restricted root directory scoping.</p>
+  </div>
+</div>
+{% endblock %}
