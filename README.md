@@ -119,6 +119,131 @@ uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ---
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+## 🔗 Tailscale Integration (Remote Access)
+
+Perfect for accessing your NAS from anywhere securely!
+
+### Benefits
+- **Zero-config VPN**: Access from anywhere without port forwarding
+- **End-to-end encryption**: All traffic encrypted between devices
+- **Cross-platform**: Works on mobile, desktop, and server
+- **Easy management**: Simple web interface for device control
+
+### Setup for Tailscale
+
+#### 1. Install Tailscale on your NAS server and get the Tailscale IP
+```bash
+# Get your Tailscale IP
+tailscale ip -4
+```
+
+#### 2. Configure HDD Browser for Tailscale
+Update your `.env` file:
+```env
+DEBUG=False  # Disable debug for remote access
+SESSION_SECRET=your_very_long_secret_key_32chars_minimum
+AUTH_USERNAME=your_strong_username
+AUTH_PASSWORD=your_very_strong_password_123!
+```
+
+#### 3. Run on Tailscale interface
+```bash
+
+uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
+```
+
+#### 4. Access from any device
+Install Tailscale on your phone/laptop and access:
+```
+# Replace 100.x.x.x with your actual Tailscale IP
+http://100.x.x.x:8080
+```
+
+### Optional: MagicDNS Setup
+Enable MagicDNS in Tailscale admin console to access via hostname:
+```
+http://your-nas-hostname:8080
+```
+
+### Security for Remote Access
+
+#### Recommended Security Settings
+```env
+# Strong authentication
+AUTH_USERNAME=your_strong_username
+AUTH_PASSWORD=your_very_strong_password_123!
+
+# Optional: Disable risky features for remote access
+ENABLE_DELETE=False  # Prevent accidental remote deletions
+ENABLE_UPLOAD=True   # Keep if you need remote uploads
+
+# Restrict access paths
+ALLOWED_ROOTS=/home/media,/mnt/nas  # Limit to specific dirs
+```
+
+### Systemd Service (Always-On NAS)
+Create `/etc/systemd/system/hdd-browser.service`:
+```ini
+[Unit]
+Description=HDD Browser NAS
+After=network.target tailscaled.service
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/path/to/hdd_browser
+Environment=PATH=/path/to/hdd_browser/.venv/bin
+ExecStart=/path/to/hdd_browser/.venv/bin/uvicorn hdd_browser.app.main:app --host 100.x.x.x --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+```bash
+sudo systemctl enable hdd-browser
+sudo systemctl start hdd-browser
+sudo systemctl status hdd-browser  # Check status
+```
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## ⚙️ Configuration
 
 Settings can come from:
