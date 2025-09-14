@@ -298,6 +298,19 @@ async function initBrowser() {
     });
   }
 
+  function syncUploadContext() {
+    // Expose for other scripts (used by browse.html)
+    window.__currentDrive = currentDrive;
+    window.__relPath = relPath || "";
+    window.loadDir = loadDir;
+
+    // Keep the hidden inputs up to date
+    const d = document.getElementById("uploadDrive");
+    const p = document.getElementById("uploadRelPath");
+    if (d) d.value = currentDrive || "";
+    if (p) p.value = relPath || "";
+  }
+
   async function loadDir() {
     previewDiv.innerHTML = "";
     const url = `/api/list?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath)}`;

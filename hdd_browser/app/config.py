@@ -57,7 +57,6 @@ def _find_env_file() -> Optional[Path]:
             break
     return None
 
-
 _ENV_FILE_PATH = _find_env_file()
 
 
@@ -93,10 +92,19 @@ class Settings(BaseSettings):
     PORT: int = 8080
     DEBUG: bool = False
 
-    # Auth
+    # Auth (legacy single-user)
     AUTH_USERNAME: str = "admin"
     AUTH_PASSWORD: str = "admin"
     SESSION_SECRET: str = "please_change_me_very_long_random"
+
+    # Optional multi-user config (JSON string)
+    # Example:
+    # USERS_JSON='[
+    #   {"username":"alice","password":"alice_pw","roles":["admin"]},
+    #   {"username":"bob","password":"bob_pw","roles":["uploader"]},
+    #   {"username":"carol","password":"carol_pw","roles":["viewer"]}
+    # ]'
+    USERS_JSON: str = ""
 
     # Features / permissions
     ENABLE_UPLOAD: bool = False
@@ -173,9 +181,9 @@ class Settings(BaseSettings):
 
     def verify(self) -> None:
         issues = []
-        if self.AUTH_USERNAME == "admin" and os.environ.get("AUTH_USERNAME") is None:
+        if self.AUTH_USERNAME == "admin" and os.environ.get("AUTH_USERNAME") is None and not self.USERS_JSON.strip():
             issues.append("AUTH_USERNAME still default")
-        if self.AUTH_PASSWORD == "admin" and os.environ.get("AUTH_PASSWORD") is None:
+        if self.AUTH_PASSWORD == "admin" and os.environ.get("AUTH_PASSWORD") is None and not self.USERS_JSON.strip():
             issues.append("AUTH_PASSWORD still default")
         if self.SESSION_SECRET.startswith("please_change_me"):
             issues.append("SESSION_SECRET weak/default")

@@ -53,6 +53,14 @@ from PIL import Image, ImageOps  # Image handling / HEIC conversion
 
 from .config import get_settings
 from .auth import router as auth_router, require_user, current_user
+# Optional roles support (for can_upload flag). Falls back gracefully if not present.
+try:
+    from .auth import user_info as _user_info  # provided by the multi-user/roles edit
+    _HAVE_USER_INFO = True
+except Exception:
+    _user_info = None
+    _HAVE_USER_INFO = False
+
 from .security import is_public_path, unauthenticated_response
 from .drive_discovery import discover_drives, resolve_drive_root
 from .file_ops import (
@@ -95,6 +103,32 @@ app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
 # Routers
 app.include_router(auth_router)
+
+# ---------------------------------------------------------------------------
+# Helper: Determine if current user can upload (UI flag only)
+# - Honors global ENABLE_UPLOAD
+# - If roles are available (multi-user edit installed), requires admin or uploader
+# - If roles are not available (legacy single-user), any authenticated user can upload when globally enabled
+# ---------------------------------------------------------------------------
+def _get_user_roles(request: Request):
+    if _HAVE_USER_INFO and _user_info:
+        try:
+            info = _user_info(request) or {}
+            roles = info.get("r") or []
+            if isinstance(roles, list):
+                return set(roles)
+        except Exception:
+            return set()
+    return set()
+
+def _can_user_upload(request: Request) -> bool:
+    if not settings.ENABLE_UPLOAD:
+        return False
+    roles = _get_user_roles(request)
+    if roles:
+        return ("admin" in roles) or ("uploader" in roles)
+    # Legacy single-user mode (no roles): allow uploads for any logged-in user when globally enabled
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +199,11 @@ async def browse_page(
     path: Optional[str] = Query(None)
 ):
     user = require_user(request)
-    return templates.TemplateResponse("browse.html", {"request": request, "user": user})
+    can_upload = _can_user_upload(request)
+    return templates.TemplateResponse(
+        "browse.html",
+        {"request": request, "user": user, "can_upload": can_upload}
+    )
 
 
 @app.get("/search", response_class=HTMLResponse)
@@ -521,6 +559,7 @@ async def api_render_image(
 async def health():
     return {"status": "ok"}
 
+
 # Update the /api/thumb endpoint to add client-side caching
 @app.get("/api/thumb")
 async def api_thumb(
@@ -552,7 +591,7 @@ async def api_thumb(
     headers = {}
     if placeholder:
         headers["X-Thumb-Placeholder"] = "1"
-    # NEW: Encourage browser caching for faster subsequent loads
+    # Encourage browser caching for faster subsequent loads
     headers["Cache-Control"] = "public, max-age=604800, immutable"
     return Response(content=data, media_type=mime, headers=headers)
 

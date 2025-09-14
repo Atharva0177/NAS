@@ -994,3 +994,45 @@ body.modal-open {
 .video-glyph { background:#222; }
 .file-glyph  { background:#555; }
 
+/* --- Toolbar horizontal layout helpers --- */
+.toolbar .tool-group {
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+/* Make label text and control sit side-by-side when desired */
+.toolbar .label-chip.label-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: .45rem;
+}
+
+/* Keep path compact and let it grow to fill available room */
+.toolbar .path-display {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* Compact inline upload block inside toolbar */
+.toolbar .upload-inline {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-left: .5rem;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.toolbar .upload-inline .upload-form {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin: 0;
+  padding: 0;
+}
+.toolbar .upload-inline .upload-result {
+  margin: 0;
+}
