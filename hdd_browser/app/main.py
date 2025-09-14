@@ -521,6 +521,41 @@ async def api_render_image(
 async def health():
     return {"status": "ok"}
 
+# Update the /api/thumb endpoint to add client-side caching
+@app.get("/api/thumb")
+async def api_thumb(
+    request: Request,
+    drive_id: str,
+    rel_path: str,
+    size: int = 0,
+    refresh: int = 0
+):
+    require_user(request)
+    root = resolve_drive_root(drive_id)
+    target = safe_join(root, rel_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    max_dim = size if (size and 16 < size <= 2048) else settings.THUMB_MAX_DIM
+    try:
+        data, mime, placeholder = get_thumbnail(
+            target,
+            max_dim=max_dim,
+            allow_cache=True,
+            refresh=bool(refresh)
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if settings.DEBUG:
+            raise HTTPException(status_code=500, detail=f"Thumbnail error: {e}")
+        raise HTTPException(status_code=500, detail="Thumbnail error")
+    headers = {}
+    if placeholder:
+        headers["X-Thumb-Placeholder"] = "1"
+    # NEW: Encourage browser caching for faster subsequent loads
+    headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return Response(content=data, media_type=mime, headers=headers)
+
 
 # ---------------------------------------------------------------------------
 # Entrypoint

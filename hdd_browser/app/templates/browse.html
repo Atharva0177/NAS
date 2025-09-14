@@ -13,17 +13,20 @@
     <button id="upBtn" class="btn-soft">Back ⬅️</button>
     <button id="toggleViewBtn" data-mode="list" class="btn-soft">Grid View</button>
 
-    <!-- NEW: Sort selector -->
+    <!-- Sort selector -->
     <label class="label-chip" style="margin-left:.5rem;">
       Sort
       <select id="sortSelect" class="input-select">
         <option value="name" selected>Name (A→Z)</option>
+        <!-- <option value="-name">Name (Z→A)</option> -->
         <option value="type">File Type</option>
+        <!-- <option value="size">Size (Small→Large)</option> -->
+        <!-- <option value="-size">Size (Large→Small)</option> -->
+        <!-- <option value="modified">Date Modified (Oldest→Newest)</option> -->
+        <!-- <option value="-modified">Date Modified (Newest→Oldest)</option> -->
       </select>
     </label>
   </div>
-
-  
 </div>
 
 <div id="entries" class="entries-surface list-mode skeleton-parent">
@@ -44,7 +47,7 @@
   <div id="uploadResult" class="upload-result"></div>
 </div>
 
-<!-- Legacy Lightbox (kept only if still referenced somewhere; otherwise can remove) -->
+<!-- Legacy Lightbox kept for compatibility -->
 <div id="lightbox" style="display:none;">
   <div id="lightboxContent" class="lightbox-inner scale-in">
     <button id="lightboxClose" class="lightbox-close" title="Close">&times;</button>
@@ -58,24 +61,6 @@
   </div>
 </div>
 
-<!-- Media Lightbox Popup (not used by independent modal JS, kept if you revert) -->
-<!-- <div id="mediaLightbox" class="mlb-hidden" aria-modal="true" role="dialog">
-  <div class="mlb-backdrop" data-mlb-close></div>
-  <div class="mlb-shell" role="document">
-    <button class="mlb-close" title="Close (Esc)" data-mlb-close>&times;</button>
-    <div class="mlb-stage">
-      <img id="mlbImage" alt="" class="mlb-media mlb-hidden" />
-      <video id="mlbVideo" class="mlb-media mlb-hidden" controls playsinline></video>
-      <div id="mlbSpinner" class="mlb-spinner"></div>
-    </div>
-    <div class="mlb-footer">
-      <button id="mlbPrev" class="mlb-nav" aria-label="Previous">&#10094;</button>
-      <div class="mlb-caption" id="mlbCaption"></div>
-      <button id="mlbNext" class="mlb-nav" aria-label="Next">&#10095;</button>
-    </div>
-  </div>
-</div> -->
-
 {% endblock %}
 
 {% block scripts %}
@@ -85,4 +70,10 @@
   const enableThumbs = {{ settings.ENABLE_THUMBNAILS | default(false) | tojson }};
 </script>
 <script src="/static/js/app.js"></script>
+{% endblock %}
+
+{% block head %}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="stylesheet" href="/static/css/app.css">
 {% endblock %}

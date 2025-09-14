@@ -19,6 +19,36 @@ document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("searchForm")) initSearch();
 });
 
+// Lazy-load thumbnails with IntersectionObserver
+let thumbObserver = null;
+if ("IntersectionObserver" in window) {
+  thumbObserver = new IntersectionObserver(
+    (entries, obs) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          const img = e.target;
+          if (img.dataset && img.dataset.src) {
+            img.src = img.dataset.src;
+            img.removeAttribute("data-src");
+          }
+          obs.unobserve(img);
+        }
+      });
+    },
+    { rootMargin: "200px 0px" }
+  );
+}
+
+// Prefetch helper for upcoming gallery images
+function prefetchImage(url) {
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    img.loading = "eager";
+    img.src = url;
+  } catch {}
+}
+
 // =============================
 // Media Detection
 // =============================
@@ -43,7 +73,7 @@ let _mediaModalZ = 2100;
 const _openModals = [];
 let _activeNav = null; // { prev: fn, next: fn } when a modal with navigation is open
 
-function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
+function createMediaModal({ title, type, src, downloadHref, onPrev, onNext, poster }) {
   const backdrop = document.createElement("div");
   backdrop.className = "media-modal-backdrop";
   backdrop.style.zIndex = _mediaModalZ++;
@@ -62,7 +92,7 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
     </div>
     <div class="media-modal-body">
       <img class="media-modal-img" alt="" style="display:${type === "image" ? "block" : "none"};" />
-      <video class="media-modal-video" controls playsinline autoplay style="display:${type === "video" ? "block" : "none"};"></video>
+      <video class="media-modal-video" controls playsinline autoplay preload="metadata" style="display:${type === "video" ? "block" : "none"};"></video>
     </div>
   `;
 
@@ -78,11 +108,12 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
   const imgEl = box.querySelector(".media-modal-img");
   const vidEl = box.querySelector(".media-modal-video");
 
-  function setMedia({ title, type, src, downloadHref }) {
+  function setMedia({ title, type, src, downloadHref, poster }) {
     // Stop and reset previous video
     if (vidEl) {
       try { vidEl.pause(); } catch {}
       vidEl.removeAttribute("src");
+      vidEl.removeAttribute("poster");
       vidEl.load?.();
     }
     // Update title
@@ -95,6 +126,7 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
       if (imgEl) {
         imgEl.style.display = "block";
         imgEl.alt = title || "";
+        imgEl.decoding = "async";
         imgEl.src = src;
       }
       if (vidEl) vidEl.style.display = "none";
@@ -106,8 +138,10 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
       }
       if (vidEl) {
         vidEl.style.display = "block";
+        vidEl.preload = "metadata";
+        vidEl.playsInline = true;
+        if (poster) vidEl.poster = poster;
         vidEl.src = src;
-        // autoplay is set; some browsers may block if not user-initiated
       }
     }
     // Update download href
@@ -123,13 +157,13 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
   }
 
   // Initial media
-  setMedia({ title, type, src, downloadHref });
+  setMedia({ title, type, src, downloadHref, poster });
 
   function closeModal() {
-    // Clean up video
     if (vidEl) {
       try { vidEl.pause(); } catch {}
       vidEl.removeAttribute("src");
+      vidEl.removeAttribute("poster");
       vidEl.load?.();
     }
     backdrop.classList.add("closing");
@@ -140,7 +174,6 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
       if (_openModals.length === 0) {
         document.body.classList.remove("modal-open");
       }
-      // Clear active nav if this was the last modal
       _activeNav = null;
     }, 160);
   }
@@ -150,19 +183,11 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
     if (e.target === backdrop) closeModal();
   });
 
-  if (prevBtn && typeof onPrev === "function") {
-    prevBtn.addEventListener("click", onPrev);
-  }
-  if (nextBtn && typeof onNext === "function") {
-    nextBtn.addEventListener("click", onNext);
-  }
+  if (prevBtn && typeof onPrev === "function") prevBtn.addEventListener("click", onPrev);
+  if (nextBtn && typeof onNext === "function") nextBtn.addEventListener("click", onNext);
 
-  // Register active nav handlers if provided
   if (onPrev || onNext) {
-    _activeNav = {
-      prev: onPrev || null,
-      next: onNext || null
-    };
+    _activeNav = { prev: onPrev || null, next: onNext || null };
   }
 
   _openModals.push(closeModal);
@@ -170,26 +195,18 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext }) {
 }
 
 function closeTopModal() {
-  if (_openModals.length) {
-    _openModals[_openModals.length - 1]();
-  }
+  if (_openModals.length) _openModals[_openModals.length - 1]();
 }
 function closeAllModals() {
-  while (_openModals.length) {
-    _openModals[_openModals.length - 1]();
-  }
+  while (_openModals.length) _openModals[_openModals.length - 1]();
 }
 window.addEventListener("keydown", (e) => {
   if (_openModals.length) {
     if (e.key === "Escape") {
-      if (e.shiftKey) {
-        closeAllModals();
-      } else {
-        closeTopModal();
-      }
+      if (e.shiftKey) closeAllModals();
+      else closeTopModal();
       return;
     }
-    // Arrow navigation for media modal
     if (e.key === "ArrowLeft" && _activeNav?.prev) {
       e.preventDefault();
       _activeNav.prev();
@@ -224,12 +241,13 @@ async function initBrowser() {
   let currentEntries = [];
   let viewMode = "list";
 
+  // Supported modes: name, -name, type, size, -size, modified, -modified
   let currentSortMode = (sortSelect && sortSelect.value) || "name";
 
-  // Media gallery state for navigation
-  let gallery = [];       // array of media entries in current dir
-  let galleryIndex = -1;  // index into gallery for current entry
-  let modalAPI = null;    // { setMedia, close, ... }
+  // Media gallery state
+  let gallery = [];
+  let galleryIndex = -1;
+  let modalAPI = null;
 
   // Load drives
   try {
@@ -248,7 +266,7 @@ async function initBrowser() {
     return;
   }
 
-  // Event handlers
+  // Handlers
   driveSelect.addEventListener("change", () => {
     currentDrive = driveSelect.value;
     relPath = "";
@@ -299,24 +317,82 @@ async function initBrowser() {
 
   // Sorting helpers
   function entryTypeRank(ent) {
-    if (ent.is_dir) return 0;                                // Folders
-    if (isPreviewableImage(ent.mime, ent.name)) return 1;    // Images
-    if (isPreviewableVideo(ent.mime, ent.name)) return 2;    // Videos
-    return 3;                                                // Others
+    // Folders first, then images, then videos, then others
+    if (ent.is_dir) return 0;
+    if (isPreviewableImage(ent.mime, ent.name)) return 1;
+    if (isPreviewableVideo(ent.mime, ent.name)) return 2;
+    return 3;
+  }
+
+  function normalizeSort(modeRaw) {
+    let mode = (modeRaw || "name").toString().toLowerCase();
+    let desc = false;
+
+    if (mode.startsWith("-")) {
+      desc = true;
+      mode = mode.slice(1);
+    }
+
+    // Accept a few aliases if ever used
+    if (mode === "name_desc") { mode = "name"; desc = true; }
+    if (mode === "name_asc") { mode = "name"; desc = false; }
+    if (mode === "size_desc") { mode = "size"; desc = true; }
+    if (mode === "size_asc") { mode = "size"; desc = false; }
+    if (mode === "modified_desc" || mode === "date_desc") { mode = "modified"; desc = true; }
+    if (mode === "modified_asc" || mode === "date_asc") { mode = "modified"; desc = false; }
+    if (mode === "date") { mode = "modified"; }
+
+    if (!["name","type","size","modified"].includes(mode)) mode = "name";
+
+    return { mode, desc };
+  }
+
+  function compareNames(a, b) {
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
   }
 
   function sortEntries(entries) {
     const arr = entries.slice();
-    if (currentSortMode === "type") {
-      arr.sort((a,b) => {
-        const ra = entryTypeRank(a);
-        const rb = entryTypeRank(b);
-        if (ra !== rb) return ra - rb;
-        return a.name.localeCompare(b.name, undefined, {sensitivity:"base"});
-      });
-    } else {
-      arr.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:"base"}));
-    }
+    const { mode, desc } = normalizeSort(currentSortMode);
+
+    arr.sort((a, b) => {
+      // Keep folders-first grouping
+      const ra = entryTypeRank(a);
+      const rb = entryTypeRank(b);
+      if (ra !== rb) return ra - rb;
+
+      let cmp = 0;
+      switch (mode) {
+        case "type":
+          // Within same group, fall back to name
+          cmp = compareNames(a, b);
+          break;
+        case "size": {
+          // Only for files; folders fall back to name
+          const aFile = !a.is_dir;
+          const bFile = !b.is_dir;
+          if (aFile && bFile) {
+            const sa = Number.isFinite(a.size) ? a.size : 0;
+            const sb = Number.isFinite(b.size) ? b.size : 0;
+            cmp = sa === sb ? compareNames(a, b) : (sa - sb);
+          } else {
+            cmp = compareNames(a, b);
+          }
+          break;
+        }
+        case "modified": {
+          const ma = Number.isFinite(a.modified) ? a.modified : 0; // epoch seconds
+          const mb = Number.isFinite(b.modified) ? b.modified : 0;
+          cmp = ma === mb ? compareNames(a, b) : (ma - mb);
+          break;
+        }
+        case "name":
+        default:
+          cmp = compareNames(a, b);
+      }
+      return desc ? -cmp : cmp;
+    });
+
     return arr;
   }
 
@@ -334,57 +410,78 @@ async function initBrowser() {
     gallery = currentEntries.filter(e => !e.is_dir && isMedia(e.mime, e.name));
   }
 
-  // Helper to compute URLs for a given entry
+  // Compute URLs for a given entry (also optimizes image/video display)
   function mediaSourceFor(entry) {
     const path = relPath ? `${relPath}/${entry.name}` : entry.name;
+    const encodedRel = encodeURIComponent(path);
+    const encodedDrive = encodeURIComponent(currentDrive);
+
+    const downloadHref = `/api/download?drive_id=${encodedDrive}&rel_path=${encodedRel}`;
+
     if (isPreviewableImage(entry.mime, entry.name)) {
-      const isHeic = entry.name.toLowerCase().endsWith(".heic") || entry.name.toLowerCase().endsWith(".heif");
-      const src = isHeic
-        ? `/api/render_image?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}&max_dim=1800`
-        : `/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
-      const downloadHref = `/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
+      const maxDim = Math.min(Math.round((window.innerWidth || 1200) * 1.2), 1600);
+      const src = `/api/render_image?drive_id=${encodedDrive}&rel_path=${encodedRel}&max_dim=${maxDim}`;
       return { type: "image", src, downloadHref };
-    } else {
-      const src = `/api/stream?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
-      const downloadHref = `/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
-      return { type: "video", src, downloadHref };
     }
+
+    if (isPreviewableVideo(entry.mime, entry.name)) {
+      const src = `/api/stream?drive_id=${encodedDrive}&rel_path=${encodedRel}`;
+      const poster = `/api/thumb?drive_id=${encodedDrive}&rel_path=${encodedRel}&size=480`;
+      return { type: "video", src, downloadHref, poster };
+    }
+
+    return { type: "other", src: downloadHref, downloadHref };
   }
 
   function openMediaPopup(entry) {
     buildGallery();
     galleryIndex = gallery.findIndex(e => e.name === entry.name);
-    if (galleryIndex === -1 && gallery.length) {
-      galleryIndex = 0;
-    }
+    if (galleryIndex === -1 && gallery.length) galleryIndex = 0;
 
     const current = gallery.length ? gallery[galleryIndex] : entry;
-    const { type, src, downloadHref } = mediaSourceFor(current);
+    const currentMedia = mediaSourceFor(current);
 
     function navigate(delta) {
       if (!gallery.length) return;
-      galleryIndex = (galleryIndex + delta + gallery.length) % gallery.length; // wrap-around
+      galleryIndex = (galleryIndex + delta + gallery.length) % gallery.length;
       const ent = gallery[galleryIndex];
-      const { type, src, downloadHref } = mediaSourceFor(ent);
+      const nextMedia = mediaSourceFor(ent);
       if (modalAPI?.setMedia) {
         modalAPI.setMedia({
           title: ent.name,
-          type,
-          src,
-          downloadHref
+          type: nextMedia.type,
+          src: nextMedia.src,
+          downloadHref: nextMedia.downloadHref,
+          poster: nextMedia.poster
         });
+      }
+      const preIdx = (galleryIndex + 1) % gallery.length;
+      const upcoming = gallery[preIdx];
+      if (upcoming && isPreviewableImage(upcoming.mime, upcoming.name)) {
+        const preview = mediaSourceFor(upcoming);
+        if (preview && preview.src) prefetchImage(preview.src);
       }
     }
 
     const api = createMediaModal({
       title: current.name,
-      type,
-      src,
-      downloadHref,
+      type: currentMedia.type,
+      src: currentMedia.src,
+      downloadHref: currentMedia.downloadHref,
+      poster: currentMedia.poster,
       onPrev: gallery.length > 1 ? () => navigate(-1) : null,
       onNext: gallery.length > 1 ? () => navigate(+1) : null
     });
     modalAPI = api;
+
+    if (gallery.length > 1) {
+      const nextIndex = (galleryIndex + 1) % gallery.length;
+      const upcoming = gallery[nextIndex];
+      if (upcoming && isPreviewableImage(upcoming.mime, upcoming.name)) {
+        const preview = mediaSourceFor(upcoming);
+        if (preview && preview.src) prefetchImage(preview.src);
+      }
+    }
   }
 
   function openNonMediaPreview(name) {
@@ -469,7 +566,7 @@ async function initBrowser() {
       if (ent.is_dir) {
         mediaHTML = `<div class="thumb-glyph folder-glyph">📁</div>`;
       } else if (enableThumbs && isPreviewableImage(ent.mime, ent.name)) {
-        mediaHTML = `<img data-thumb="true" alt="${ent.name}" />`;
+        mediaHTML = `<img data-thumb="true" alt="${ent.name}" loading="lazy" decoding="async" />`;
       } else if (enableThumbs && isPreviewableVideo(ent.mime, ent.name)) {
         mediaHTML = `<div class="thumb-glyph video-glyph">🎬</div>`;
       } else {
@@ -497,8 +594,13 @@ async function initBrowser() {
       if (enableThumbs && !ent.is_dir && isPreviewableImage(ent.mime, ent.name)) {
         const imgEl = card.querySelector("img[data-thumb]");
         if (imgEl) {
-          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}&size=220`;
-          imgEl.src = thumbURL;
+          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}&size=180`;
+          if (thumbObserver) {
+            imgEl.dataset.src = thumbURL;
+            thumbObserver.observe(imgEl);
+          } else {
+            imgEl.src = thumbURL;
+          }
         }
       }
     });
@@ -543,25 +645,6 @@ async function initBrowser() {
     } else {
       previewDiv.innerHTML = `<p>No inline preview for ${data.name} (${data.mime || "unknown type"})</p>`;
     }
-  }
-
-  // Upload
-  const uploadForm = document.getElementById("uploadForm");
-  if (uploadForm) {
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const fd = new FormData(uploadForm);
-      fd.append("drive_id", currentDrive);
-      fd.append("rel_path", relPath);
-      const r = await fetch("/api/upload", { method:"POST", body: fd });
-      const out = document.getElementById("uploadResult");
-      if (r.ok) {
-        out.textContent = "Upload complete.";
-        loadDir();
-      } else {
-        out.textContent = "Upload failed.";
-      }
-    });
   }
 
   loadDir();
