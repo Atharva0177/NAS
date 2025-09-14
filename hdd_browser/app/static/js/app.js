@@ -118,21 +118,16 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
   const dlLink = box.querySelector(".media-modal-download");
 
   function setMedia({ title, type, src, downloadHref, poster }) {
-    // Stop and reset previous video
     if (vidEl) {
-      try {
-        vidEl.pause();
-      } catch {}
+      try { vidEl.pause(); } catch {}
       vidEl.removeAttribute("src");
       vidEl.removeAttribute("poster");
       vidEl.load?.();
     }
-    // Update title
     if (titleEl) {
       titleEl.textContent = title || "";
       titleEl.setAttribute("title", title || "");
     }
-    // Toggle elements and set src
     if (type === "image") {
       if (imgEl) {
         imgEl.style.display = "block";
@@ -155,7 +150,6 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
         vidEl.src = src;
       }
     }
-    // Update download href
     if (dlLink) {
       if (downloadHref) {
         dlLink.href = downloadHref;
@@ -170,9 +164,7 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
   function cleanup() {
     try {
       if (vidEl) {
-        try {
-          vidEl.pause();
-        } catch {}
+        try { vidEl.pause(); } catch {}
         vidEl.removeAttribute("src");
         vidEl.load?.();
       }
@@ -188,9 +180,7 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
   if (prevBtn && onPrev) prevBtn.addEventListener("click", onPrev);
   if (nextBtn && onNext) nextBtn.addEventListener("click", onNext);
 
-  // Initialize content
   setMedia({ title, type, src, downloadHref, poster });
-
   return { setMedia, close: cleanup };
 }
 
@@ -233,7 +223,7 @@ async function initBrowser() {
     window.loadDir = loadDir;
   }
 
-  // Keep the upload form hidden inputs in sync (if present)
+  // Keep the upload hidden inputs in sync (if present)
   function syncUploadHidden() {
     const d = document.getElementById("uploadDrive");
     const p = document.getElementById("uploadRelPath");
@@ -304,62 +294,131 @@ async function initBrowser() {
     });
   }
 
-  // Upload wiring (prevents default submit and posts required fields)
+  // Upload wiring: single button supports files (default) and folders (Alt/right-click/press-hold).
   (function wireUpload() {
-    const uploadForm = document.getElementById("uploadForm");
     const uploadSection = document.getElementById("uploadSection");
     if (uploadSection && enableUpload) uploadSection.style.display = "block";
-    if (!uploadForm) return;
 
-    // Initial sync
-    syncUploadHidden();
+    const uploadBtn = document.getElementById("uploadBtn");
+    const fileInput = document.getElementById("fileInput");
+    const folderInput = document.getElementById("folderInput");
+    const resultEl = document.getElementById("uploadResult");
 
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
+    function setStatus(msg) {
+      if (resultEl) resultEl.textContent = msg || "";
+    }
 
-      const fileInput = uploadForm.querySelector('input[type="file"]');
-      const submitBtn = uploadForm.querySelector('button[type="submit"]');
-      const resultEl = document.getElementById("uploadResult");
-
-      if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-        alert("Please choose a file to upload.");
-        return;
-      }
+    function ensureContext() {
       if (!currentDrive) {
         alert("Select a drive before uploading.");
-        return;
+        return false;
+      }
+      return true;
+    }
+
+    // Click: files by default; Alt/Option-click: folder
+    uploadBtn?.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (!ensureContext()) return;
+      if (e.altKey) {
+        folderInput?.click();
+      } else {
+        fileInput?.click();
+      }
+    });
+
+    // Right-click opens folder picker
+    uploadBtn?.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (!ensureContext()) return;
+      folderInput?.click();
+    });
+
+    // Press-and-hold (550ms) triggers folder picker (touch or mouse)
+    let lpTimer = null;
+    let lpFired = false;
+
+    function clearLP() {
+      if (lpTimer) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+    }
+
+    uploadBtn?.addEventListener("pointerdown", (e) => {
+      if (!ensureContext()) return;
+      lpFired = false;
+      clearLP();
+      lpTimer = setTimeout(() => {
+        lpFired = true;
+        folderInput?.click();
+      }, 550);
+    });
+    uploadBtn?.addEventListener("pointerup", () => clearLP());
+    uploadBtn?.addEventListener("pointerleave", () => clearLP());
+
+    // Core upload: iterate files, preserve directory structure with webkitRelativePath
+    async function uploadFiles(list) {
+      if (!ensureContext()) return;
+      if (!list || list.length === 0) return;
+
+      const total = list.length;
+      let done = 0, ok = 0, failed = 0;
+
+      // Limit concurrency to avoid overloading server
+      const CONC = 3;
+      let idx = 0;
+
+      function nextJob() {
+        if (idx >= total) return null;
+        const f = list[idx++];
+        // Preserve folder structure from directory picker; for regular files this is ""
+        const relFull = (f.webkitRelativePath && f.webkitRelativePath.length > 0) ? f.webkitRelativePath : f.name;
+        const subDir = relFull.includes("/") ? relFull.split("/").slice(0, -1).join("/") : "";
+        const targetRelDir = [relPath || "", subDir].filter(Boolean).join("/");
+
+        return async () => {
+          const form = new FormData();
+          form.append("drive_id", currentDrive);
+          form.append("rel_path", targetRelDir); // nested target directory
+          form.append("file", f, f.name);
+
+          try {
+            const r = await fetch("/api/upload", { method: "POST", body: form, credentials: "same-origin" });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            ok++;
+          } catch (_err) {
+            failed++;
+          } finally {
+            done++;
+            setStatus(`Uploading ${done}/${total}… (ok: ${ok}, failed: ${failed})`);
+          }
+        };
       }
 
-      const form = new FormData();
-      form.append("drive_id", currentDrive);
-      form.append("rel_path", relPath || "");
-      form.append("file", fileInput.files[0], fileInput.files[0].name);
-
-      try {
-        if (submitBtn) {
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Uploading…";
+      setStatus(`Uploading 0/${total}…`);
+      // Simple worker pool
+      const workers = Array.from({ length: Math.min(CONC, total) }, async () => {
+        while (true) {
+          const job = nextJob();
+          if (!job) break;
+          await job();
         }
-        if (resultEl) resultEl.textContent = "";
+      });
+      await Promise.all(workers);
 
-        const r = await fetch("/api/upload", { method: "POST", body: form, credentials: "same-origin" });
-        if (!r.ok) {
-          const text = await r.text().catch(() => "");
-          throw new Error(text || `Upload failed (HTTP ${r.status})`);
-        }
-        const data = await r.json().catch(() => ({}));
-        if (resultEl) resultEl.textContent = `Uploaded: ${data.name || fileInput.files[0].name}`;
+      setStatus(`Uploaded ${ok}/${total}${failed ? ` (failed: ${failed})` : ""}.`);
+      await loadDir(); // refresh listing
+    }
 
-        await loadDir(); // refresh listing
-        fileInput.value = "";
-      } catch (err) {
-        alert(err?.message || "Upload failed");
-      } finally {
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "Upload";
-        }
-      }
+    // On selection, trigger upload
+    fileInput?.addEventListener("change", async () => {
+      await uploadFiles(fileInput.files);
+      if (fileInput) fileInput.value = ""; // reset
+    });
+    folderInput?.addEventListener("change", async () => {
+      await uploadFiles(folderInput.files);
+      if (folderInput) folderInput.value = ""; // reset
     });
   })();
 
@@ -373,7 +432,7 @@ async function initBrowser() {
   }
 
   function sortEntries(entries) {
-    const mode = currentSortMode || "name";
+    const mode = (typeof currentSortMode === "string" && currentSortMode) || "name";
     const asc = !mode.startsWith("-");
     const key = asc ? mode : mode.slice(1);
     const arr = entries.slice();
@@ -689,6 +748,8 @@ async function initBrowser() {
     }
   }
 
+  // Replace only the handleAction function with this updated one
+
   async function handleAction(action, name, isDir) {
     if (action === "preview" && !isDir) {
       const entry = currentEntries.find((e) => e.name === name);
@@ -697,16 +758,31 @@ async function initBrowser() {
         return;
       }
       openNonMediaPreview(name);
-    } else if (action === "delete") {
-      if (!confirm(`Delete ${name}?`)) return;
+      return;
+    }
+
+    if (action === "delete") {
+      // Build the full relative path for deletion
+      const targetRel = relPath ? `${relPath}/${name}` : name;
+
       const form = new FormData();
       form.append("drive_id", currentDrive);
-      form.append("rel_path", relPath ? `${relPath}/${name}` : name);
-      const r = await fetch("/api/delete", { method: "POST", body: form });
+      form.append("rel_path", targetRel);
+
+      if (isDir) {
+        // Ask for explicit confirmation to delete entire folder tree
+        if (!confirm(`Delete the folder "${name}" and all of its contents? This cannot be undone.`)) return;
+        form.append("recursive", "1");
+      } else {
+        if (!confirm(`Delete ${name}?`)) return;
+      }
+
+      const r = await fetch("/api/delete", { method: "POST", body: form, credentials: "same-origin" });
       if (r.ok) {
         loadDir();
       } else {
-        alert("Delete failed");
+        const msg = await r.text().catch(() => "");
+        alert(`Delete failed: ${r.status} ${msg}`);
       }
     }
   }

@@ -25,13 +25,21 @@
 
     {% if can_upload and settings.ENABLE_UPLOAD %}
     <div id="uploadSection" class="upload-inline">
-      <form id="uploadForm" class="upload-form" action="/api/upload" method="post" enctype="multipart/form-data" style="margin:0;">
-        <input type="hidden" id="uploadDrive" name="drive_id" value="">
-        <input type="hidden" id="uploadRelPath" name="rel_path" value="">
-        <input type="file" name="file" class="input-file" />
-        <button type="submit" class="btn-primary">Upload</button>
-      </form>
-      <div id="uploadResult" class="upload-result"></div>
+      <!-- context (kept in sync by JS) -->
+      <input type="hidden" id="uploadDrive" value="">
+      <input type="hidden" id="uploadRelPath" value="">
+
+      <!-- Single visible button -->
+      <button id="uploadBtn" class="btn-primary"
+              title="Click to upload files. Press-and-hold, right-click, or Alt/Option-click to upload a folder.">
+        Upload
+      </button>
+
+      <!-- Hidden native pickers -->
+      <input type="file" id="fileInput" class="input-file" multiple style="display:none;" />
+      <input type="file" id="folderInput" class="input-file" webkitdirectory directory style="display:none;" />
+
+      <span id="uploadResult" class="upload-result" style="margin-left:.5rem;"></span>
     </div>
     {% endif %}
   </div>
@@ -61,7 +69,7 @@
 
 {% block head %}
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/x-icon" href="D:\NAS\hdd_browser\app\static\favicon.ico">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
 <link rel="stylesheet" href="/static/css/app.css">
 {% endblock %}
 

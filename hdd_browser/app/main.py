@@ -429,7 +429,8 @@ async def api_search(
 async def api_delete(
     request: Request,
     drive_id: str = Form(...),
-    rel_path: str = Form(...)
+    rel_path: str = Form(...),
+    recursive: int = Form(0)  # 0/1 from client; treat non-zero as True
 ):
     require_user(request)
     if not settings.ENABLE_DELETE:
@@ -442,9 +443,14 @@ async def api_delete(
 
     root = resolve_drive_root(drive_id)
     target = safe_join(root, rel_path)
+    # For safety, never allow deleting the drive root itself
+    if target == root:
+        raise HTTPException(status_code=400, detail="Cannot delete drive root")
+
     if not target.exists():
         raise HTTPException(status_code=404, detail="Not found")
-    delete_path(target)
+
+    delete_path(target, recursive=bool(recursive))
     return {"status": "ok"}
 
 
@@ -458,10 +464,19 @@ async def api_upload(
     require_user(request)
     if not settings.ENABLE_UPLOAD:
         raise HTTPException(status_code=403, detail="Upload disabled")
+
     root = resolve_drive_root(drive_id)
-    target_dir = safe_join(root, rel_path)
-    if not target_dir.is_dir():
+    # Resolve target directory inside the drive (defends against traversal)
+    target_dir = safe_join(root, rel_path or "")
+
+    # If the path exists but is not a directory, reject
+    if target_dir.exists() and not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="Target path not dir")
+
+    # Ensure directory exists for nested folder uploads
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the file (save_upload also re-checks path safety and uniqueness)
     data = await file.read()
     saved = save_upload(target_dir, file.filename, data)
     return {"status": "ok", "path": str(saved)}

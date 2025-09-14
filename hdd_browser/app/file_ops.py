@@ -95,9 +95,33 @@ def search(root: Path, query: str, max_results: int, max_depth: int) -> List[Dic
                     return results
     return results
 
-def delete_path(path: Path):
+def _delete_path_recursive(path: Path):
+    # Do not follow symlinks; delete the link itself
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+        return
+    if path.is_file():
+        path.unlink(missing_ok=True)
+        return
     if path.is_dir():
-        # Danger: only allow delete empty dir for safety
+        for child in path.iterdir():
+            _delete_path_recursive(child)
+        path.rmdir()
+        return
+    # If it’s neither file nor dir (e.g., broken symlink), try unlink
+    try:
+        path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+
+def delete_path(path: Path, recursive: bool = False):
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    if recursive:
+        _delete_path_recursive(path)
+        return
+    if path.is_dir():
+        # Only allow deleting empty dir when not recursive
         if any(path.iterdir()):
             raise HTTPException(status_code=400, detail="Dir not empty")
         path.rmdir()
