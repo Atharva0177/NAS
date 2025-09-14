@@ -130,6 +130,18 @@ def _can_user_upload(request: Request) -> bool:
     # Legacy single-user mode (no roles): allow uploads for any logged-in user when globally enabled
     return True
 
+# NEW: Helper for delete permission (UI flag only)
+# - Honors global ENABLE_DELETE
+# - If roles are available, requires admin or deleter
+# - In legacy mode (no roles), any authenticated user can delete when globally enabled
+def _can_user_delete(request: Request) -> bool:
+    if not settings.ENABLE_DELETE:
+        return False
+    roles = _get_user_roles(request)
+    if roles:
+        return ("admin" in roles) or ("deleter" in roles)
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Authentication Gate (Global)
@@ -200,9 +212,10 @@ async def browse_page(
 ):
     user = require_user(request)
     can_upload = _can_user_upload(request)
+    can_delete = _can_user_delete(request)  # NEW: pass delete permission to template
     return templates.TemplateResponse(
         "browse.html",
-        {"request": request, "user": user, "can_upload": can_upload}
+        {"request": request, "user": user, "can_upload": can_upload, "can_delete": can_delete}
     )
 
 
@@ -421,6 +434,12 @@ async def api_delete(
     require_user(request)
     if not settings.ENABLE_DELETE:
         raise HTTPException(status_code=403, detail="Delete disabled")
+
+    # Enforce roles (admin or deleter) when roles are present
+    roles = _get_user_roles(request)
+    if roles and not (("admin" in roles) or ("deleter" in roles)):
+        raise HTTPException(status_code=403, detail="Not authorized to delete")
+
     root = resolve_drive_root(drive_id)
     target = safe_join(root, rel_path)
     if not target.exists():

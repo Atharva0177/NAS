@@ -25,8 +25,7 @@
 
     {% if can_upload and settings.ENABLE_UPLOAD %}
     <div id="uploadSection" class="upload-inline">
-      <form id="uploadForm" class="upload-form" enctype="multipart/form-data" style="margin:0;">
-        <!-- keep these hidden fields in sync from app.js -->
+      <form id="uploadForm" class="upload-form" action="/api/upload" method="post" enctype="multipart/form-data" style="margin:0;">
         <input type="hidden" id="uploadDrive" name="drive_id" value="">
         <input type="hidden" id="uploadRelPath" name="rel_path" value="">
         <input type="file" name="file" class="input-file" />
@@ -58,87 +57,21 @@
     </div>
   </div>
 </div>
-
 {% endblock %}
 
 {% block head %}
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="icon" type="image/x-icon" href="D:\NAS\hdd_browser\app\static\favicon.ico">
 <link rel="stylesheet" href="/static/css/app.css">
 {% endblock %}
 
 {% block scripts %}
 <script>
-  const enableUpload = {{ settings.ENABLE_UPLOAD | tojson }};
-  const enableDelete = {{ settings.ENABLE_DELETE | tojson }};
-  const enableThumbs = {{ settings.ENABLE_THUMBNAILS | default(false) | tojson }};
-
-  // Upload handler: uses hidden inputs kept in sync by app.js
-  document.addEventListener("DOMContentLoaded", () => {
-    const uploadForm = document.getElementById("uploadForm");
-    if (!uploadForm) return;
-
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-
-      const fileInput = uploadForm.querySelector('input[type="file"]');
-      const submitBtn = uploadForm.querySelector('button[type="submit"]');
-      const resultEl = document.getElementById("uploadResult");
-      const hiddenDrive = document.getElementById("uploadDrive");
-      const hiddenRel = document.getElementById("uploadRelPath");
-
-      // Safety fallback if sync hasn't run yet
-      const driveSelect = document.getElementById("driveSelect");
-      if (hiddenDrive && (!hiddenDrive.value || hiddenDrive.value === "") && driveSelect) {
-        hiddenDrive.value = driveSelect.value || "";
-      }
-      if (hiddenRel && (!hiddenRel.value || hiddenRel.value === "")) {
-        hiddenRel.value = window.__relPath || "";
-      }
-
-      if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-        alert("Please choose a file to upload.");
-        return;
-      }
-      if (!hiddenDrive || !hiddenDrive.value) {
-        alert("Select a drive before uploading.");
-        return;
-      }
-
-      const form = new FormData(uploadForm);
-
-      try {
-        if (submitBtn) {
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Uploading…";
-        }
-        if (resultEl) resultEl.textContent = "";
-
-        const r = await fetch("/api/upload", { method: "POST", body: form });
-        if (!r.ok) {
-          const text = await r.text().catch(() => "");
-          throw new Error(text || `Upload failed (HTTP ${r.status})`);
-        }
-        const data = await r.json().catch(() => ({}));
-        if (resultEl) resultEl.textContent = `Uploaded: ${data.path || fileInput.files[0].name}`;
-
-        // Ask app.js to refresh listing if available
-        if (typeof window.loadDir === "function") {
-          window.loadDir();
-        } else if (driveSelect) {
-          driveSelect.dispatchEvent(new Event("change"));
-        }
-
-        fileInput.value = "";
-      } catch (err) {
-        alert(err?.message || "Upload failed");
-      } finally {
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "Upload";
-        }
-      }
-    });
-  });
+  // Make feature flags user-aware
+  window.enableUpload = {{ (can_upload and settings.ENABLE_UPLOAD) | tojson }};
+  window.enableDelete = {{ (can_delete and settings.ENABLE_DELETE) | tojson }};
+  window.enableThumbs = {{ settings.ENABLE_THUMBNAILS | default(false) | tojson }};
 </script>
+
+<script src="/static/js/app.js" defer></script>
 {% endblock %}

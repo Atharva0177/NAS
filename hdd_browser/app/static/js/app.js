@@ -2,16 +2,25 @@
 // Utility / Helpers
 // =============================
 async function fetchJSON(url) {
-  const r = await fetch(url);
+  const r = await fetch(url, { credentials: "same-origin" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return await r.json();
 }
 
 function formatSize(bytes) {
-  if (bytes >= 1e9) return (bytes/1e9).toFixed(2) + " GB";
-  if (bytes >= 1e6) return (bytes/1e6).toFixed(2) + " MB";
-  if (bytes >= 1e3) return (bytes/1e3).toFixed(2) + " KB";
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + " GB";
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(2) + " MB";
+  if (bytes >= 1e3) return (bytes / 1e3).toFixed(2) + " KB";
   return bytes + " B";
+}
+
+function escapeHtml(s) {
+  return (s == null ? "" : String(s))
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -53,36 +62,37 @@ function prefetchImage(url) {
 // Media Detection
 // =============================
 function isPreviewableImage(mime, name) {
-  const ext = name.toLowerCase().split(".").pop();
-  return ["jpg","jpeg","png","webp","gif","bmp","heic","heif"].includes(ext)
-      || (mime && mime.startsWith("image/"));
+  const ext = (name || "").toLowerCase().split(".").pop();
+  return (
+    ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif"].includes(ext) ||
+    (mime && mime.startsWith("image/"))
+  );
 }
 function isPreviewableVideo(mime, name) {
-  const ext = name.toLowerCase().split(".").pop();
-  return (mime && mime.startsWith("video/")) ||
-         ["mp4","mkv","mov","webm","avi"].includes(ext);
+  const ext = (name || "").toLowerCase().split(".").pop();
+  return (
+    ["mp4", "webm", "mov", "m4v", "avi", "mkv"].includes(ext) ||
+    (mime && mime.startsWith("video/"))
+  );
 }
 function isMedia(mime, name) {
   return isPreviewableImage(mime, name) || isPreviewableVideo(mime, name);
 }
 
 // =============================
-// Independent Media Modals with Navigation
+// Simple Media Modal
 // =============================
-let _mediaModalZ = 2100;
-const _openModals = [];
-let _activeNav = null; // { prev: fn, next: fn } when a modal with navigation is open
-
-function createMediaModal({ title, type, src, downloadHref, onPrev, onNext, poster }) {
+let _mediaModalZ = 1000;
+function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNext }) {
   const backdrop = document.createElement("div");
   backdrop.className = "media-modal-backdrop";
-  backdrop.style.zIndex = _mediaModalZ++;
+  backdrop.style.zIndex = String(_mediaModalZ++);
 
   const box = document.createElement("div");
   box.className = "media-modal-box";
   box.innerHTML = `
     <div class="media-modal-header">
-      <span class="media-modal-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+      <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
       <div class="media-modal-actions">
         ${onPrev ? `<button class="media-modal-btn media-modal-prev" aria-label="Previous">‹ Prev</button>` : ""}
         ${onNext ? `<button class="media-modal-btn media-modal-next" aria-label="Next">Next ›</button>` : ""}
@@ -91,27 +101,28 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext, post
       </div>
     </div>
     <div class="media-modal-body">
-      <img class="media-modal-img" alt="" style="display:${type === "image" ? "block" : "none"};" />
-      <video class="media-modal-video" controls playsinline autoplay preload="metadata" style="display:${type === "video" ? "block" : "none"};"></video>
+      <img class="media-modal-img" alt="">
+      <video class="media-modal-video" controls style="display:none;"></video>
     </div>
   `;
 
   backdrop.appendChild(box);
   document.body.appendChild(backdrop);
-  document.body.classList.add("modal-open");
 
   const titleEl = box.querySelector(".media-modal-title");
+  const imgEl = box.querySelector(".media-modal-img");
+  const vidEl = box.querySelector(".media-modal-video");
   const closeBtn = box.querySelector(".media-modal-close");
   const prevBtn = box.querySelector(".media-modal-prev");
   const nextBtn = box.querySelector(".media-modal-next");
   const dlLink = box.querySelector(".media-modal-download");
-  const imgEl = box.querySelector(".media-modal-img");
-  const vidEl = box.querySelector(".media-modal-video");
 
   function setMedia({ title, type, src, downloadHref, poster }) {
     // Stop and reset previous video
     if (vidEl) {
-      try { vidEl.pause(); } catch {}
+      try {
+        vidEl.pause();
+      } catch {}
       vidEl.removeAttribute("src");
       vidEl.removeAttribute("poster");
       vidEl.load?.();
@@ -156,75 +167,35 @@ function createMediaModal({ title, type, src, downloadHref, onPrev, onNext, post
     }
   }
 
-  // Initial media
-  setMedia({ title, type, src, downloadHref, poster });
-
-  function closeModal() {
-    if (vidEl) {
-      try { vidEl.pause(); } catch {}
-      vidEl.removeAttribute("src");
-      vidEl.removeAttribute("poster");
-      vidEl.load?.();
-    }
-    backdrop.classList.add("closing");
-    setTimeout(() => {
-      backdrop.remove();
-      const idx = _openModals.indexOf(closeModal);
-      if (idx >= 0) _openModals.splice(idx, 1);
-      if (_openModals.length === 0) {
-        document.body.classList.remove("modal-open");
+  function cleanup() {
+    try {
+      if (vidEl) {
+        try {
+          vidEl.pause();
+        } catch {}
+        vidEl.removeAttribute("src");
+        vidEl.load?.();
       }
-      _activeNav = null;
-    }, 160);
+    } catch {}
+    backdrop.remove();
   }
 
-  closeBtn.addEventListener("click", closeModal);
+  closeBtn?.addEventListener("click", cleanup);
   backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) closeModal();
+    if (e.target === backdrop) cleanup();
   });
 
-  if (prevBtn && typeof onPrev === "function") prevBtn.addEventListener("click", onPrev);
-  if (nextBtn && typeof onNext === "function") nextBtn.addEventListener("click", onNext);
+  if (prevBtn && onPrev) prevBtn.addEventListener("click", onPrev);
+  if (nextBtn && onNext) nextBtn.addEventListener("click", onNext);
 
-  if (onPrev || onNext) {
-    _activeNav = { prev: onPrev || null, next: onNext || null };
-  }
+  // Initialize content
+  setMedia({ title, type, src, downloadHref, poster });
 
-  _openModals.push(closeModal);
-  return { close: closeModal, backdrop, setMedia, imgEl, vidEl };
-}
-
-function closeTopModal() {
-  if (_openModals.length) _openModals[_openModals.length - 1]();
-}
-function closeAllModals() {
-  while (_openModals.length) _openModals[_openModals.length - 1]();
-}
-window.addEventListener("keydown", (e) => {
-  if (_openModals.length) {
-    if (e.key === "Escape") {
-      if (e.shiftKey) closeAllModals();
-      else closeTopModal();
-      return;
-    }
-    if (e.key === "ArrowLeft" && _activeNav?.prev) {
-      e.preventDefault();
-      _activeNav.prev();
-    } else if (e.key === "ArrowRight" && _activeNav?.next) {
-      e.preventDefault();
-      _activeNav.next();
-    }
-  }
-});
-
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
-  }[c]));
+  return { setMedia, close: cleanup };
 }
 
 // =============================
-// Main Browser Initialization
+// Browser Page
 // =============================
 async function initBrowser() {
   const driveSelect = document.getElementById("driveSelect");
@@ -235,9 +206,15 @@ async function initBrowser() {
   const previewDiv = document.getElementById("preview");
   const sortSelect = document.getElementById("sortSelect");
 
+  // Global flags provided by template (fallbacks in case undefined)
+  const enableUpload = typeof window.enableUpload !== "undefined" ? window.enableUpload : true;
+  const enableDelete = typeof window.enableDelete !== "undefined" ? window.enableDelete : false;
+  const enableThumbs = typeof window.enableThumbs !== "undefined" ? window.enableThumbs : true;
+
+  // Query params
   const params = new URLSearchParams(window.location.search);
-  let currentDrive = params.get("drive_id");
-  let relPath = "";
+  let currentDrive = params.get("drive_id") || "";
+  let relPath = ""; // current relative directory path
   let currentEntries = [];
   let viewMode = "list";
 
@@ -249,27 +226,58 @@ async function initBrowser() {
   let galleryIndex = -1;
   let modalAPI = null;
 
+  // Expose a minimal API for other inline scripts if needed
+  function exposeGlobals() {
+    window.__currentDrive = currentDrive;
+    window.__relPath = relPath || "";
+    window.loadDir = loadDir;
+  }
+
+  // Keep the upload form hidden inputs in sync (if present)
+  function syncUploadHidden() {
+    const d = document.getElementById("uploadDrive");
+    const p = document.getElementById("uploadRelPath");
+    if (d) d.value = currentDrive || "";
+    if (p) p.value = relPath || "";
+  }
+
   // Load drives
   try {
     const drives = await fetchJSON("/api/drives");
+    // Normalize to array of {id, label}
+    const opts = Array.isArray(drives)
+      ? drives.map((d) =>
+          typeof d === "string"
+            ? { id: d, label: d }
+            : { id: d.id || d.drive_id || d.name || d.path || "", label: d.label || d.name || d.path || d.id || "" }
+        )
+      : [];
+    // Populate select
     driveSelect.innerHTML = "";
-    drives.forEach(d => {
+    for (const d of opts) {
+      if (!d.id) continue;
       const opt = document.createElement("option");
       opt.value = d.id;
-      opt.textContent = d.id;
-      if (d.id === currentDrive) opt.selected = true;
+      opt.textContent = d.label || d.id;
       driveSelect.appendChild(opt);
-    });
-    if (!currentDrive && drives.length) currentDrive = drives[0].id;
-  } catch {
-    entriesDiv.innerHTML = "<p>Error loading drives</p>";
-    return;
+    }
+    // Choose current drive if missing
+    if (!currentDrive && driveSelect.options.length) {
+      currentDrive = driveSelect.options[0].value;
+    }
+    if (currentDrive) {
+      driveSelect.value = currentDrive;
+    }
+  } catch (e) {
+    console.error("Failed to load drives:", e);
   }
 
   // Handlers
   driveSelect.addEventListener("change", () => {
     currentDrive = driveSelect.value;
     relPath = "";
+    exposeGlobals();
+    syncUploadHidden();
     loadDir();
   });
 
@@ -278,55 +286,82 @@ async function initBrowser() {
     const parts = relPath.split("/").filter(Boolean);
     parts.pop();
     relPath = parts.join("/");
+    exposeGlobals();
+    syncUploadHidden();
     loadDir();
   });
 
-  if (toggleViewBtn) {
-    toggleViewBtn.addEventListener("click", () => {
-      viewMode = viewMode === "list" ? "grid" : "list";
-      toggleViewBtn.textContent = viewMode === "list" ? "Grid View" : "List View";
-      entriesDiv.classList.remove("list-mode","grid-mode");
-      entriesDiv.classList.add(viewMode + "-mode");
-      renderEntries(currentEntries);
-    });
-  }
+  toggleViewBtn.addEventListener("click", () => {
+    viewMode = viewMode === "list" ? "grid" : "list";
+    toggleViewBtn.textContent = viewMode === "list" ? "Grid View" : "List View";
+    renderEntries(currentEntries);
+  });
 
   if (sortSelect) {
     sortSelect.addEventListener("change", () => {
-      currentSortMode = sortSelect.value;
+      currentSortMode = sortSelect.value || "name";
       renderEntries(currentEntries);
     });
   }
 
-  function syncUploadContext() {
-    // Expose for other scripts (used by browse.html)
-    window.__currentDrive = currentDrive;
-    window.__relPath = relPath || "";
-    window.loadDir = loadDir;
+  // Upload wiring (prevents default submit and posts required fields)
+  (function wireUpload() {
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadSection = document.getElementById("uploadSection");
+    if (uploadSection && enableUpload) uploadSection.style.display = "block";
+    if (!uploadForm) return;
 
-    // Keep the hidden inputs up to date
-    const d = document.getElementById("uploadDrive");
-    const p = document.getElementById("uploadRelPath");
-    if (d) d.value = currentDrive || "";
-    if (p) p.value = relPath || "";
-  }
+    // Initial sync
+    syncUploadHidden();
 
-  async function loadDir() {
-    previewDiv.innerHTML = "";
-    const url = `/api/list?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath)}`;
-    try {
-      const data = await fetchJSON(url);
-      currentPathSpan.textContent = data.path;
-      currentEntries = data.entries;
-      // reset gallery on dir change
-      gallery = [];
-      galleryIndex = -1;
-      modalAPI = null;
-      renderEntries(currentEntries);
-    } catch (e) {
-      entriesDiv.innerHTML = `<p>Error: ${e.message}</p>`;
-    }
-  }
+    uploadForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const fileInput = uploadForm.querySelector('input[type="file"]');
+      const submitBtn = uploadForm.querySelector('button[type="submit"]');
+      const resultEl = document.getElementById("uploadResult");
+
+      if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        alert("Please choose a file to upload.");
+        return;
+      }
+      if (!currentDrive) {
+        alert("Select a drive before uploading.");
+        return;
+      }
+
+      const form = new FormData();
+      form.append("drive_id", currentDrive);
+      form.append("rel_path", relPath || "");
+      form.append("file", fileInput.files[0], fileInput.files[0].name);
+
+      try {
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Uploading…";
+        }
+        if (resultEl) resultEl.textContent = "";
+
+        const r = await fetch("/api/upload", { method: "POST", body: form, credentials: "same-origin" });
+        if (!r.ok) {
+          const text = await r.text().catch(() => "");
+          throw new Error(text || `Upload failed (HTTP ${r.status})`);
+        }
+        const data = await r.json().catch(() => ({}));
+        if (resultEl) resultEl.textContent = `Uploaded: ${data.name || fileInput.files[0].name}`;
+
+        await loadDir(); // refresh listing
+        fileInput.value = "";
+      } catch (err) {
+        alert(err?.message || "Upload failed");
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Upload";
+        }
+      }
+    });
+  })();
 
   // Sorting helpers
   function entryTypeRank(ent) {
@@ -337,90 +372,82 @@ async function initBrowser() {
     return 3;
   }
 
-  function normalizeSort(modeRaw) {
-    let mode = (modeRaw || "name").toString().toLowerCase();
-    let desc = false;
-
-    if (mode.startsWith("-")) {
-      desc = true;
-      mode = mode.slice(1);
-    }
-
-    // Accept a few aliases if ever used
-    if (mode === "name_desc") { mode = "name"; desc = true; }
-    if (mode === "name_asc") { mode = "name"; desc = false; }
-    if (mode === "size_desc") { mode = "size"; desc = true; }
-    if (mode === "size_asc") { mode = "size"; desc = false; }
-    if (mode === "modified_desc" || mode === "date_desc") { mode = "modified"; desc = true; }
-    if (mode === "modified_asc" || mode === "date_asc") { mode = "modified"; desc = false; }
-    if (mode === "date") { mode = "modified"; }
-
-    if (!["name","type","size","modified"].includes(mode)) mode = "name";
-
-    return { mode, desc };
-  }
-
-  function compareNames(a, b) {
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
-  }
-
   function sortEntries(entries) {
+    const mode = currentSortMode || "name";
+    const asc = !mode.startsWith("-");
+    const key = asc ? mode : mode.slice(1);
     const arr = entries.slice();
-    const { mode, desc } = normalizeSort(currentSortMode);
-
     arr.sort((a, b) => {
-      // Keep folders-first grouping
-      const ra = entryTypeRank(a);
-      const rb = entryTypeRank(b);
-      if (ra !== rb) return ra - rb;
-
-      let cmp = 0;
-      switch (mode) {
-        case "type":
-          // Within same group, fall back to name
-          cmp = compareNames(a, b);
-          break;
-        case "size": {
-          // Only for files; folders fall back to name
-          const aFile = !a.is_dir;
-          const bFile = !b.is_dir;
-          if (aFile && bFile) {
-            const sa = Number.isFinite(a.size) ? a.size : 0;
-            const sb = Number.isFinite(b.size) ? b.size : 0;
-            cmp = sa === sb ? compareNames(a, b) : (sa - sb);
-          } else {
-            cmp = compareNames(a, b);
-          }
-          break;
-        }
-        case "modified": {
-          const ma = Number.isFinite(a.modified) ? a.modified : 0; // epoch seconds
-          const mb = Number.isFinite(b.modified) ? b.modified : 0;
-          cmp = ma === mb ? compareNames(a, b) : (ma - mb);
-          break;
-        }
-        case "name":
-        default:
-          cmp = compareNames(a, b);
+      if (key === "type") {
+        const rA = entryTypeRank(a);
+        const rB = entryTypeRank(b);
+        return asc ? rA - rB : rB - rA;
       }
-      return desc ? -cmp : cmp;
+      if (key === "size") {
+        const sA = a.is_dir ? -1 : a.size || 0;
+        const sB = b.is_dir ? -1 : b.size || 0;
+        return asc ? sA - sB : sB - sA;
+      }
+      if (key === "modified") {
+        const mA = a.modified || 0;
+        const mB = b.modified || 0;
+        return asc ? mA - mB : mB - mA;
+      }
+      // name
+      const nA = (a.name || "").toLowerCase();
+      const nB = (b.name || "").toLowerCase();
+      if (nA < nB) return asc ? -1 : 1;
+      if (nA > nB) return asc ? 1 : -1;
+      return 0;
     });
-
     return arr;
+  }
+
+  async function loadDir() {
+    previewDiv.innerHTML = "";
+    if (!currentDrive) {
+      entriesDiv.innerHTML = "<p>Select a drive</p>";
+      return;
+    }
+    const url = `/api/list?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath)}`;
+    try {
+      const data = await fetchJSON(url);
+      currentPathSpan.textContent = data.path || "";
+      currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      // reset gallery on dir change
+      gallery = [];
+      galleryIndex = -1;
+      modalAPI = null;
+      renderEntries(currentEntries);
+      // keep upload context synced with the current folder
+      exposeGlobals();
+      syncUploadHidden();
+      // show upload if allowed
+      if (enableUpload) {
+        const us = document.getElementById("uploadSection");
+        if (us) us.style.display = "block";
+      }
+    } catch (e) {
+      entriesDiv.innerHTML = `<p>Error: ${escapeHtml(e.message)}</p>`;
+    }
   }
 
   function renderEntries(entries) {
     const sorted = sortEntries(entries);
-    if (viewMode === "grid" && enableThumbs) {
+    if (viewMode === "grid") {
       renderGrid(sorted);
     } else {
       renderTable(sorted);
+    }
+    if (enableUpload) {
+      const us = document.getElementById("uploadSection");
+      if (us) us.style.display = "block";
     }
   }
 
   // Build gallery of media files in current directory
   function buildGallery() {
-    gallery = currentEntries.filter(e => !e.is_dir && isMedia(e.mime, e.name));
+    gallery = currentEntries.filter((e) => !e.is_dir && isMedia(e.mime, e.name));
   }
 
   // Compute URLs for a given entry (also optimizes image/video display)
@@ -448,7 +475,7 @@ async function initBrowser() {
 
   function openMediaPopup(entry) {
     buildGallery();
-    galleryIndex = gallery.findIndex(e => e.name === entry.name);
+    galleryIndex = gallery.findIndex((e) => e.name === entry.name);
     if (galleryIndex === -1 && gallery.length) galleryIndex = 0;
 
     const current = gallery.length ? gallery[galleryIndex] : entry;
@@ -465,7 +492,7 @@ async function initBrowser() {
           type: nextMedia.type,
           src: nextMedia.src,
           downloadHref: nextMedia.downloadHref,
-          poster: nextMedia.poster
+          poster: nextMedia.poster,
         });
       }
       const preIdx = (galleryIndex + 1) % gallery.length;
@@ -483,7 +510,7 @@ async function initBrowser() {
       downloadHref: currentMedia.downloadHref,
       poster: currentMedia.poster,
       onPrev: gallery.length > 1 ? () => navigate(-1) : null,
-      onNext: gallery.length > 1 ? () => navigate(+1) : null
+      onNext: gallery.length > 1 ? () => navigate(+1) : null,
     });
     modalAPI = api;
 
@@ -502,7 +529,31 @@ async function initBrowser() {
     const url = `/api/preview?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
     fetchJSON(url)
       .then((data) => renderInlinePreview(data))
-      .catch((e) => { previewDiv.innerHTML = `<p>Preview error: ${e.message}</p>`; });
+      .catch((e) => {
+        previewDiv.innerHTML = `<p>Preview error: ${escapeHtml(e.message)}</p>`;
+      });
+  }
+
+  function renderInlinePreview(data) {
+    if (!data.mime && !data.name) {
+      previewDiv.innerHTML = "<p>No preview.</p>";
+      return;
+    }
+    const lowerName = data.name.toLowerCase();
+    if (
+      (data.mime && (data.mime.startsWith("text/") || data.mime === "application/json")) ||
+      (!data.mime && lowerName.match(/\.(txt|json|log|md|csv)$/))
+    ) {
+      previewDiv.innerHTML = `<h3>Preview: ${escapeHtml(
+        data.name
+      )}</h3><pre class="preview">${escapeHtml(data.text || "")}${
+        data.truncated ? "\n[TRUNCATED]" : ""
+      }</pre>`;
+    } else {
+      previewDiv.innerHTML = `<p>No inline preview for ${escapeHtml(data.name)} (${escapeHtml(
+        data.mime || "unknown type"
+      )})</p>`;
+    }
   }
 
   function renderTable(entries) {
@@ -516,26 +567,38 @@ async function initBrowser() {
       <tbody></tbody>`;
     const tbody = table.querySelector("tbody");
     entries.forEach((ent) => {
-      const icon = ent.is_dir ? "📁" :
-        (isPreviewableImage(ent.mime, ent.name) ? "🖼️" :
-          isPreviewableVideo(ent.mime, ent.name) ? "🎬" : "📄");
+      const icon = ent.is_dir
+        ? "📁"
+        : isPreviewableImage(ent.mime, ent.name)
+        ? "🖼️"
+        : isPreviewableVideo(ent.mime, ent.name)
+        ? "🎬"
+        : "📄";
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${icon} <a href="#" data-name="${ent.name}">${ent.name}</a></td>
-        <td>${ent.is_dir ? "DIR" : (ent.mime || "")}</td>
+        <td>${icon} <a href="#" data-name="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</a></td>
+        <td>${ent.is_dir ? "DIR" : escapeHtml(ent.mime || "")}</td>
         <td>${ent.is_dir ? "" : formatSize(ent.size)}</td>
-        <td>${new Date(ent.modified*1000).toLocaleString()}</td>
+        <td>${new Date(ent.modified * 1000).toLocaleString()}</td>
         <td>
-          ${!ent.is_dir ? `<button data-action="preview" data-name="${ent.name}">Preview</button>
-            <a href="/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath ? relPath + '/' + ent.name : ent.name)}" target="_blank">Download</a>` : ""}
-          ${enableDelete ? `<button data-action="delete" data-name="${ent.name}">Delete</button>` : ""}
+          ${
+            !ent.is_dir
+              ? `<button data-action="preview" data-name="${escapeHtml(ent.name)}">Preview</button>
+            <a href="/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(
+                  relPath ? relPath + "/" + ent.name : ent.name
+                )}" target="_blank">Download</a>`
+              : ""
+          }
+          ${enableDelete ? `<button data-action="delete" data-name="${escapeHtml(ent.name)}">Delete</button>` : ""}
         </td>
       `;
       const link = tr.querySelector("a");
-      link.addEventListener("click", e => {
+      link.addEventListener("click", (e) => {
         e.preventDefault();
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
+          exposeGlobals();
+          syncUploadHidden();
           loadDir();
         } else {
           if (isMedia(ent.mime, ent.name)) {
@@ -545,12 +608,10 @@ async function initBrowser() {
           }
         }
       });
-      tr.querySelectorAll("button[data-action]").forEach(btn => {
-        btn.addEventListener("click", () => handleAction(
-          btn.dataset.action,
-          ent.name,
-          ent.is_dir
-        ));
+      tr.querySelectorAll("button[data-action]").forEach((btn) => {
+        btn.addEventListener("click", () =>
+          handleAction(btn.dataset.action, ent.name, ent.is_dir)
+        );
       });
       tbody.appendChild(tr);
     });
@@ -564,14 +625,14 @@ async function initBrowser() {
 
   function renderGrid(entries) {
     entriesDiv.innerHTML = "";
-    entriesDiv.classList.remove("list-mode","grid-mode");
+    entriesDiv.classList.remove("list-mode", "grid-mode");
     entriesDiv.classList.add("grid-mode");
     if (!entries.length) {
       entriesDiv.innerHTML = "<p>(Empty)</p>";
       return;
     }
     const frag = document.createDocumentFragment();
-    entries.forEach(ent => {
+    entries.forEach((ent) => {
       const card = document.createElement("div");
       card.className = "thumb-card";
       const path = relPath ? `${relPath}/${ent.name}` : ent.name;
@@ -579,7 +640,7 @@ async function initBrowser() {
       if (ent.is_dir) {
         mediaHTML = `<div class="thumb-glyph folder-glyph">📁</div>`;
       } else if (enableThumbs && isPreviewableImage(ent.mime, ent.name)) {
-        mediaHTML = `<img data-thumb="true" alt="${ent.name}" loading="lazy" decoding="async" />`;
+        mediaHTML = `<img data-thumb="true" alt="${escapeHtml(ent.name)}" loading="lazy" decoding="async" />`;
       } else if (enableThumbs && isPreviewableVideo(ent.mime, ent.name)) {
         mediaHTML = `<div class="thumb-glyph video-glyph">🎬</div>`;
       } else {
@@ -587,12 +648,14 @@ async function initBrowser() {
       }
       card.innerHTML = `
         ${mediaHTML}
-        <div class="thumb-name" title="${ent.name}">${ent.name}</div>
+        <div class="thumb-name" title="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</div>
         <div class="thumb-meta">${ent.is_dir ? "DIR" : formatSize(ent.size)}</div>
       `;
       card.addEventListener("click", () => {
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
+          exposeGlobals();
+          syncUploadHidden();
           loadDir();
         } else {
           if (isMedia(ent.mime, ent.name)) {
@@ -607,7 +670,9 @@ async function initBrowser() {
       if (enableThumbs && !ent.is_dir && isPreviewableImage(ent.mime, ent.name)) {
         const imgEl = card.querySelector("img[data-thumb]");
         if (imgEl) {
-          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}&size=180`;
+          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(
+            path
+          )}&size=180`;
           if (thumbObserver) {
             imgEl.dataset.src = thumbURL;
             thumbObserver.observe(imgEl);
@@ -626,7 +691,7 @@ async function initBrowser() {
 
   async function handleAction(action, name, isDir) {
     if (action === "preview" && !isDir) {
-      const entry = currentEntries.find(e => e.name === name);
+      const entry = currentEntries.find((e) => e.name === name);
       if (entry && isMedia(entry.mime, entry.name)) {
         openMediaPopup(entry);
         return;
@@ -637,7 +702,7 @@ async function initBrowser() {
       const form = new FormData();
       form.append("drive_id", currentDrive);
       form.append("rel_path", relPath ? `${relPath}/${name}` : name);
-      const r = await fetch("/api/delete", { method:"POST", body: form });
+      const r = await fetch("/api/delete", { method: "POST", body: form });
       if (r.ok) {
         loadDir();
       } else {
@@ -646,63 +711,42 @@ async function initBrowser() {
     }
   }
 
-  function renderInlinePreview(data) {
-    if (!data.mime && !data.name) {
-      previewDiv.innerHTML = "<p>No preview.</p>";
-      return;
-    }
-    const lowerName = data.name.toLowerCase();
-    if ((data.mime && (data.mime.startsWith("text/") || data.mime === "application/json")) ||
-        (!data.mime && lowerName.match(/\.(txt|json|log|md|csv)$/))) {
-      previewDiv.innerHTML = `<h3>Preview: ${data.name}</h3><pre class="preview">${escapeHtml(data.text || "")}${data.truncated? "\n[TRUNCATED]" : ""}</pre>`;
-    } else {
-      previewDiv.innerHTML = `<p>No inline preview for ${data.name} (${data.mime || "unknown type"})</p>`;
-    }
-  }
-
+  // Initial load
+  exposeGlobals();
+  syncUploadHidden();
   loadDir();
 }
 
 // =============================
-// Search Page Init (if used)
+// Search Page (minimal)
 // =============================
-async function initSearch() {
-  const driveSelect = document.getElementById("searchDrive");
-  try {
-    const drives = await fetchJSON("/api/drives");
-    drives.forEach(d => {
-      const opt = document.createElement("option");
-      opt.value = d.id;
-      opt.textContent = d.id;
-      driveSelect.appendChild(opt);
-    });
-  } catch {}
+function initSearch() {
   const form = document.getElementById("searchForm");
-  form.addEventListener("submit", async e => {
+  const results = document.getElementById("searchResults");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const fd = new FormData(form);
-    const q = fd.get("query");
-    const depth = fd.get("depth");
-    const limit = fd.get("limit");
-    const url = `/api/search?drive_id=${encodeURIComponent(driveSelect.value)}&query=${encodeURIComponent(q)}&depth=${depth}&limit=${limit}`;
-    const resultsDiv = document.getElementById("searchResults");
-    resultsDiv.textContent = "Searching...";
+    const q = form.querySelector("input[name='q']")?.value || "";
+    const drive = form.querySelector("select[name='drive_id']")?.value || "";
+    results.innerHTML = "Searching...";
     try {
-      const data = await fetchJSON(url);
-      if (!data.results.length) {
-        resultsDiv.textContent = "No matches.";
+      const data = await fetchJSON(`/api/search?drive_id=${encodeURIComponent(drive)}&q=${encodeURIComponent(q)}`);
+      const items = Array.isArray(data?.results) ? data.results : [];
+      if (!items.length) {
+        results.innerHTML = "<p>No results</p>";
         return;
       }
       const ul = document.createElement("ul");
-      data.results.forEach(r => {
+      items.forEach((it) => {
         const li = document.createElement("li");
-        li.innerHTML = `${r.is_dir ? "📁" : "📄"} ${r.path}`;
+        li.textContent = `${it.path} (${formatSize(it.size || 0)})`;
         ul.appendChild(li);
       });
-      resultsDiv.innerHTML = "";
-      resultsDiv.appendChild(ul);
-    } catch (e2) {
-      resultsDiv.textContent = "Search error.";
+      results.innerHTML = "";
+      results.appendChild(ul);
+    } catch (err) {
+      results.innerHTML = `<p>Error: ${escapeHtml(err.message)}</p>`;
     }
   });
 }
