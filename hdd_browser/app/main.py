@@ -73,20 +73,22 @@ from .file_ops import (
 )
 from .thumbnailer import get_thumbnail
 from .heic_init import init_heic
+from .admin import router as admin_router  # Admin dashboard/API
 
 # ---------------------------------------------------------------------------
 # Settings / Initialization
 # ---------------------------------------------------------------------------
-settings = get_settings()
+# Initialize once for app title and session secret; feature flags will be read per request.
+_s0 = get_settings()
 init_heic()
 
-app = FastAPI(title=settings.APP_NAME)
+app = FastAPI(title=_s0.APP_NAME)
 
 # Session middleware MUST come before auth_gate executes.
 # Adjust cookie params as needed (secure=True if HTTPS only).
 app.add_middleware(
     SessionMiddleware,
-    secret_key=settings.SESSION_SECRET,
+    secret_key=_s0.SESSION_SECRET,
     same_site="lax",
     https_only=False,  # Set True when serving strictly over HTTPS
     max_age=60 * 60 * 8  # 8h session (adjust as desired)
@@ -97,19 +99,15 @@ templates_path = Path("hdd_browser/app/templates")
 static_path = Path("hdd_browser/app/static")
 
 templates = Jinja2Templates(directory=str(templates_path))
-templates.env.globals["settings"] = settings
 
-app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+# Dynamic settings proxy so templates always see latest values without restart
+class _SettingsProxy:
+    def __getattr__(self, name):
+        return getattr(get_settings(), name)
 
-# Routers
-app.include_router(auth_router)
+templates.env.globals["settings"] = _SettingsProxy()
 
-# ---------------------------------------------------------------------------
-# Helper: Determine if current user can upload (UI flag only)
-# - Honors global ENABLE_UPLOAD
-# - If roles are available (multi-user edit installed), requires admin or uploader
-# - If roles are not available (legacy single-user), any authenticated user can upload when globally enabled
-# ---------------------------------------------------------------------------
+# Expose a helper to Jinja to check if current request user is admin
 def _get_user_roles(request: Request):
     if _HAVE_USER_INFO and _user_info:
         try:
@@ -121,8 +119,29 @@ def _get_user_roles(request: Request):
             return set()
     return set()
 
+def _tmpl_is_admin(request: Request) -> bool:
+    try:
+        return "admin" in _get_user_roles(request)
+    except Exception:
+        return False
+
+templates.env.globals["is_admin"] = _tmpl_is_admin
+
+app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
+# Routers
+app.include_router(auth_router)
+app.include_router(admin_router)
+
+# ---------------------------------------------------------------------------
+# Helper: Determine if current user can upload (UI flag only)
+# - Honors global ENABLE_UPLOAD
+# - If roles are available (multi-user edit installed), requires admin or uploader
+# - If roles are not available (legacy single-user), any authenticated user can upload when globally enabled
+# ---------------------------------------------------------------------------
 def _can_user_upload(request: Request) -> bool:
-    if not settings.ENABLE_UPLOAD:
+    s = get_settings()
+    if not s.ENABLE_UPLOAD:
         return False
     roles = _get_user_roles(request)
     if roles:
@@ -135,7 +154,8 @@ def _can_user_upload(request: Request) -> bool:
 # - If roles are available, requires admin or deleter
 # - In legacy mode (no roles), any authenticated user can delete when globally enabled
 def _can_user_delete(request: Request) -> bool:
-    if not settings.ENABLE_DELETE:
+    s = get_settings()
+    if not s.ENABLE_DELETE:
         return False
     roles = _get_user_roles(request)
     if roles:
@@ -201,8 +221,8 @@ async def home(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/auth/login")
-    return templates.TemplateResponse("index.html", {"request": request, "user": user})
-
+    # Pass fresh settings each render
+    return templates.TemplateResponse("index.html", {"request": request, "user": user, "settings": get_settings()})
 
 @app.get("/browse", response_class=HTMLResponse)
 async def browse_page(
@@ -213,16 +233,17 @@ async def browse_page(
     user = require_user(request)
     can_upload = _can_user_upload(request)
     can_delete = _can_user_delete(request)  # NEW: pass delete permission to template
+    # Pass fresh settings each render
     return templates.TemplateResponse(
         "browse.html",
-        {"request": request, "user": user, "can_upload": can_upload, "can_delete": can_delete}
+        {"request": request, "user": user, "can_upload": can_upload, "can_delete": can_delete, "settings": get_settings()}
     )
-
 
 @app.get("/search", response_class=HTMLResponse)
 async def search_page(request: Request):
     user = require_user(request)
-    return templates.TemplateResponse("search.html", {"request": request, "user": user})
+    # Pass fresh settings each render (in case templates reference it)
+    return templates.TemplateResponse("search.html", {"request": request, "user": user, "settings": get_settings()})
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +253,6 @@ async def search_page(request: Request):
 async def api_drives(request: Request):
     require_user(request)
     return discover_drives()
-
 
 @app.get("/api/list")
 async def api_list(
@@ -269,8 +289,8 @@ async def api_preview(
     target = safe_join(root, rel_path)
     if not target.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
-    return preview_file(target, settings.MAX_TEXT_PREVIEW_BYTES)
-
+    s = get_settings()
+    return preview_file(target, s.MAX_TEXT_PREVIEW_BYTES)
 
 @app.get("/api/download")
 async def api_download(
@@ -284,6 +304,25 @@ async def api_download(
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(str(target), filename=target.name)
+
+# NEW: Inline view endpoint for embedding in <iframe> (e.g., PDFs)
+@app.get("/api/view")
+async def api_view(
+    request: Request,
+    drive_id: str,
+    rel_path: str
+):
+    require_user(request)
+    root = resolve_drive_root(drive_id)
+    target = safe_join(root, rel_path)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    headers = {
+        # Inline so browsers can display (PDF/image/text) inside iframe
+        "Content-Disposition": f'inline; filename="{target.name}"'
+    }
+    return FileResponse(str(target), media_type=mime, headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +366,6 @@ def parse_range(range_header: str, file_size: int) -> Optional[Tuple[int, int]]:
         return start, end
     except ValueError:
         return None
-
 
 @app.get("/api/stream")
 async def api_stream(
@@ -412,9 +450,10 @@ async def api_search(
     limit: int = Query(None)
 ):
     require_user(request)
+    s = get_settings()
     root = resolve_drive_root(drive_id)
-    depth = depth or settings.SEARCH_DEFAULT_DEPTH
-    limit = min(limit or settings.MAX_SEARCH_RESULTS, settings.MAX_SEARCH_RESULTS)
+    depth = depth or s.SEARCH_DEFAULT_DEPTH
+    limit = min(limit or s.MAX_SEARCH_RESULTS, s.MAX_SEARCH_RESULTS)
     return {
         "drive_id": drive_id,
         "query": query,
@@ -433,7 +472,8 @@ async def api_delete(
     recursive: int = Form(0)  # 0/1 from client; treat non-zero as True
 ):
     require_user(request)
-    if not settings.ENABLE_DELETE:
+    s = get_settings()
+    if not s.ENABLE_DELETE:
         raise HTTPException(status_code=403, detail="Delete disabled")
 
     # Enforce roles (admin or deleter) when roles are present
@@ -450,9 +490,9 @@ async def api_delete(
     if not target.exists():
         raise HTTPException(status_code=404, detail="Not found")
 
+    # delete_path now supports recursive deletion
     delete_path(target, recursive=bool(recursive))
     return {"status": "ok"}
-
 
 @app.post("/api/upload")
 async def api_upload(
@@ -462,28 +502,23 @@ async def api_upload(
     file: UploadFile = File(...)
 ):
     require_user(request)
-    if not settings.ENABLE_UPLOAD:
+    s = get_settings()
+    if not s.ENABLE_UPLOAD:
         raise HTTPException(status_code=403, detail="Upload disabled")
-
     root = resolve_drive_root(drive_id)
-    # Resolve target directory inside the drive (defends against traversal)
     target_dir = safe_join(root, rel_path or "")
-
     # If the path exists but is not a directory, reject
     if target_dir.exists() and not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="Target path not dir")
-
-    # Ensure directory exists for nested folder uploads
+    # Ensure nested directories are created for folder uploads
     target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save the file (save_upload also re-checks path safety and uniqueness)
     data = await file.read()
     saved = save_upload(target_dir, file.filename, data)
     return {"status": "ok", "path": str(saved)}
 
 
 # ---------------------------------------------------------------------------
-# API: Thumbnails
+# API: Thumbnails (with client cache hints)
 # ---------------------------------------------------------------------------
 @app.get("/api/thumb")
 async def api_thumb(
@@ -498,7 +533,8 @@ async def api_thumb(
     target = safe_join(root, rel_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    max_dim = size if (size and 16 < size <= 2048) else settings.THUMB_MAX_DIM
+    s = get_settings()
+    max_dim = size if (size and 16 < size <= 2048) else s.THUMB_MAX_DIM
     try:
         data, mime, placeholder = get_thumbnail(
             target,
@@ -509,12 +545,14 @@ async def api_thumb(
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        if settings.DEBUG:
+        if s.DEBUG:
             raise HTTPException(status_code=500, detail=f"Thumbnail error: {e}")
         raise HTTPException(status_code=500, detail="Thumbnail error")
     headers = {}
     if placeholder:
         headers["X-Thumb-Placeholder"] = "1"
+    # Encourage browser caching for faster subsequent loads
+    headers["Cache-Control"] = "public, max-age=604800, immutable"
     return Response(content=data, media_type=mime, headers=headers)
 
 
@@ -546,7 +584,8 @@ async def api_render_image(
 
     try:
         with Image.open(target) as im:
-            if heic_like and not getattr(settings, "ENABLE_HEIC_CONVERSION", True):
+            s = get_settings()
+            if heic_like and not getattr(s, "ENABLE_HEIC_CONVERSION", True):
                 raise HTTPException(status_code=400, detail="HEIC conversion disabled")
 
             # Respect orientation
@@ -581,7 +620,8 @@ async def api_render_image(
     except HTTPException:
         raise
     except Exception as e:
-        if settings.DEBUG:
+        s = get_settings()
+        if s.DEBUG:
             raise HTTPException(status_code=500, detail=f"Render error: {e}")
         raise HTTPException(status_code=500, detail="Render error")
 
@@ -594,52 +634,17 @@ async def health():
     return {"status": "ok"}
 
 
-# Update the /api/thumb endpoint to add client-side caching
-@app.get("/api/thumb")
-async def api_thumb(
-    request: Request,
-    drive_id: str,
-    rel_path: str,
-    size: int = 0,
-    refresh: int = 0
-):
-    require_user(request)
-    root = resolve_drive_root(drive_id)
-    target = safe_join(root, rel_path)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    max_dim = size if (size and 16 < size <= 2048) else settings.THUMB_MAX_DIM
-    try:
-        data, mime, placeholder = get_thumbnail(
-            target,
-            max_dim=max_dim,
-            allow_cache=True,
-            refresh=bool(refresh)
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        if settings.DEBUG:
-            raise HTTPException(status_code=500, detail=f"Thumbnail error: {e}")
-        raise HTTPException(status_code=500, detail="Thumbnail error")
-    headers = {}
-    if placeholder:
-        headers["X-Thumb-Placeholder"] = "1"
-    # Encourage browser caching for faster subsequent loads
-    headers["Cache-Control"] = "public, max-age=604800, immutable"
-    return Response(content=data, media_type=mime, headers=headers)
-
-
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 def run():
     import uvicorn
+    s = get_settings()
     uvicorn.run(
         "hdd_browser.app.main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=getattr(settings, "DEBUG", False)
+        host=s.HOST,
+        port=s.PORT,
+        reload=getattr(s, "DEBUG", False)
     )
 
 

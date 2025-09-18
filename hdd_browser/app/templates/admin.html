@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard • HDD Browser{% endblock %}
+
+{% block head %}
+  <link rel="stylesheet" href="/static/css/admin.css" />
+{% endblock %}
+
+{% block content %}
+<section class="admin-hero">
+  <div class="hero-text">
+    <h1 class="title">Admin Dashboard</h1>
+    <p class="subtitle">Monitor system health, manage users, and inspect storage at a glance.</p>
+    <div class="feature-badges" id="featureBadges">
+      <!-- badges set by JS -->
+      <span class="badge pill muted">Loading features…</span>
+    </div>
+  </div>
+  <div class="hero-visual">
+    <div class="orbital">
+      <div class="planet"></div>
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+    </div>
+  </div>
+</section>
+
+<section class="cards-grid" id="stats">
+  <div class="card glow stat">
+    <div class="card-title">Uptime</div>
+    <div class="stat-value" data-k="uptime">–</div>
+    <div class="stat-sub">since last restart</div>
+  </div>
+  <div class="card glow stat">
+    <div class="card-title">Total Files</div>
+    <div class="stat-value" data-k="total_files">–</div>
+    <div class="stat-sub">across all roots</div>
+  </div>
+  <div class="card glow stat">
+    <div class="card-title">Total Folders</div>
+    <div class="stat-value" data-k="total_dirs">–</div>
+    <div class="stat-sub">indexed</div>
+  </div>
+  <div class="card glow stat">
+    <div class="card-title">Total Size</div>
+    <div class="stat-value" data-k="total_bytes">–</div>
+    <div class="stat-sub">bytes on disk</div>
+  </div>
+  <div class="card glow stat">
+    <div class="card-title">Thumb Cache</div>
+    <div class="stat-value" data-k="thumb_cache_bytes">–</div>
+    <div class="stat-sub">local cache usage</div>
+  </div>
+</section>
+<div id="statsError" class="inline-error"></div>
+
+<section class="charts-grid">
+  <div class="panel chart-panel">
+    <div class="panel-header">
+      <h3>User Roles Distribution</h3>
+      <span class="muted">Live from USERS_JSON</span>
+    </div>
+    <canvas id="rolesChart" height="220"></canvas>
+  </div>
+  <div class="panel chart-panel">
+    <div class="panel-header">
+      <h3>Roots by Size</h3>
+      <span class="muted">Top roots by total bytes</span>
+    </div>
+    <canvas id="rootsSizeChart" height="220"></canvas>
+  </div>
+  <div class="panel chart-panel">
+    <div class="panel-header">
+      <h3>Thumb Cache Trend</h3>
+      <span class="muted">Local snapshot every 15s</span>
+    </div>
+    <canvas id="thumbTrendChart" height="220"></canvas>
+  </div>
+</section>
+
+<section class="panels-2">
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Roots Overview</h3>
+      <span class="muted">Per-root counts and sizes</span>
+    </div>
+    <ul id="rootsList" class="kv-list">
+      <li class="muted">Loading…</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Create User</h3>
+      <span class="muted">Add a new user and assign roles</span>
+    </div>
+    <form id="createUserForm" class="create-user-form">
+      <div class="row">
+        <label>Username
+          <input type="text" name="username" required />
+        </label>
+        <label>Password
+          <input type="password" name="password" required />
+        </label>
+      </div>
+      <div class="roles">
+        <div class="roles-title">Roles</div>
+        <label class="role-pill"><input type="checkbox" name="role" value="viewer" checked /> viewer</label>
+        <label class="role-pill"><input type="checkbox" name="role" value="uploader" /> uploader</label>
+        <label class="role-pill"><input type="checkbox" name="role" value="deleter" /> deleter</label>
+        <label class="role-pill"><input type="checkbox" name="role" value="admin" /> admin</label>
+      </div>
+      <div class="row end">
+        <button class="btn-gradient" type="submit">Create User</button>
+      </div>
+      <div id="createMsg" class="muted"></div>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h3>User Management</h3>
+    <span class="muted">Modify roles or passwords. At least one admin is required.</span>
+  </div>
+  <div class="table-wrap">
+    <table id="usersTable" class="tbl">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Roles</th>
+          <th>Password</th>
+          <th class="right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="4" class="muted">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/static/js/admin.js" defer></script>
+{% endblock %}

@@ -30,6 +30,9 @@
         <a href="/" class="nav-link" data-active="{{ 'true' if request.url.path=='/' else 'false' }}">Home</a>
         <a href="/browse" class="nav-link" data-active="{{ 'true' if request.url.path.startswith('/browse') else 'false' }}">Browse</a>
         <a href="/search" class="nav-link" data-active="{{ 'true' if request.url.path.startswith('/search') else 'false' }}">Search</a>
+        {% if user and is_admin(request) %}
+        <a href="/admin" class="nav-link" data-active="{{ 'true' if request.url.path.startswith('/admin') else 'false' }}">Admin</a>
+        {% endif %}
       </nav>
       <div class="header-actions">
         <button id="themeToggle" class="btn-ghost" title="Toggle Theme">
@@ -72,6 +75,6 @@
       }
     });
   </script>
-  {% block scripts %}{% endblock %}
+  {% block scripts %}<link rel="icon" type="image/x-icon" href="/static/favicon.ico">{% endblock %}
 </body>
 </html>

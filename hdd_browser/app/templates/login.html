@@ -1,25 +1,46 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 
-{% block extra_head %}
-  {# If base.html supports an 'extra_head' block, use this. Otherwise, move the <link> into the main content or add globally. #}
+{% block head %}
   <link rel="stylesheet" href="/static/css/auth.css">
 {% endblock %}
 
 {% block content %}
-<div class="auth-bg">
-  <!-- Decorative backdrop or logo slot -->
-  <div class="auth-orb orb-a"></div>
-  <div class="auth-orb orb-b"></div>
+<div class="auth-shell">
+  <!-- Decorative background orbs -->
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
 
-  <div class="auth-container">
-    <div class="auth-card" role="main" aria-labelledby="loginTitle">
-      <header class="auth-card-header">
-        <h1 id="loginTitle" class="auth-title">
-          <span class="auth-title-accent" aria-hidden="true"></span>
-          Sign In
-        </h1>
-        <p class="auth-subtitle">Access your drives securely.</p>
+  <div class="auth-grid">
+    <!-- Left: Hero / Branding -->
+    <section class="auth-hero">
+      <div class="brand-row">
+        <div class="logo-dot"></div>
+        <h1 class="brand-name">{{ settings.APP_NAME or "Atharva's NAS" }}</h1>
+      </div>
+      <h2 class="hero-title">Access, manage, and preview your files with ease.</h2>
+      <p class="hero-subtitle">
+        Secure session, fast browsing, thumbnails, streaming, and search — all in one tidy interface.
+      </p>
+      <ul class="hero-list">
+        <li>🔒 Cookies are HTTP-only and sessions are signed</li>
+        <li>🖼️ Instant image previews (HEIC supported)</li>
+        <li>🎞️ Video streaming with range requests</li>
+        <li>🔎 Recursive search and smart sorting</li>
+      </ul>
+      <div class="hero-meta">
+        <span class="chip">Optimized</span>
+        <span class="chip">Reactive</span>
+        <span class="chip">Themed</span>
+      </div>
+    </section>
+
+    <!-- Right: Form -->
+    <section class="auth-card glass" role="main" aria-labelledby="loginTitle">
+      <header class="card-header">
+        <h2 id="loginTitle" class="card-title">Sign In</h2>
+        <p class="card-subtitle">Access your drives securely.</p>
       </header>
 
       {% if error %}
@@ -36,33 +57,25 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         {% endif %}
 
-        <div class="field-group">
-        <!-- <div class="field-icon" aria-hidden="true">👤</div> -->
-          <label for="username" class="field-label">👤 Username</label><br>
-          <!-- <small id="usernameHelp" class="field-hint">Use configured admin credentials.</small> -->
-          <div class="field-wrapper">
-            <input
-              type="text"
-              id="username"
-              name="username"
-              class="field-input"
-              placeholder="john_doe"
-              autocomplete="username"
-              required
-              value="{{ username or '' }}"
-              {% if not username %}autofocus{% endif %}
-              aria-describedby="usernameHelp"
-            >
-            <div class="field-focus-bar"></div>
-            
-          </div>
-          <br>
-          
+        <div class="field">
+          <label for="username" class="field-label">👤 Username</label>
+          <input
+            type="text"
+            id="username"
+            name="username"
+            class="field-input"
+            placeholder="john_doe"
+            autocomplete="username"
+            required
+            value="{{ username or '' }}"
+            {% if not username %}autofocus{% endif %}
+          >
+          <span class="focus-underline"></span>
         </div>
 
-        <div class="field-group">
-          <label for="password" class="field-label">🔒Password</label>
-          <div class="field-wrapper password-wrapper">
+        <div class="field">
+          <label for="password" class="field-label">🔒 Password</label>
+          <div class="pw-row">
             <input
               type="password"
               id="password"
@@ -71,62 +84,47 @@
               placeholder="••••••••"
               autocomplete="current-password"
               required
-              aria-describedby="pwHint pwCaps"
             >
             <button
               type="button"
-              class="pw-toggle-btn"
+              class="pw-toggle"
               id="pwToggle"
               aria-label="Show password"
               aria-pressed="false"
-            >
-              <span class="pw-toggle-icon show" aria-hidden="true">👁️</span>
-              <!-- <span class="pw-toggle-icon hide" aria-hidden="true">🙈</span> -->
-            </button>
-            <div class="field-focus-bar"></div>
-            <!-- <div class="field-icon" aria-hidden="true">🔒</div> -->
+              title="Show/Hide password"
+            >👁️</button>
           </div>
-          <div id="pwCaps" class="caps-indicator" role="status" aria-live="polite" hidden>Caps Lock is ON</div>
-          <!-- <small id="pwHint" class="field-hint">Never share this password.</small> -->
+          <span class="focus-underline"></span>
         </div>
-        <br>
 
-        <!-- <div class="form-row options-row">
-            <label class="checkbox">
-              <input type="checkbox" name="remember" value="1">
-              <span>Remember me</span>
-            </label>
-            <a href="#" class="muted-link" onclick="return false;" aria-disabled="true">Forgot password?</a>
-        </div> -->
+        <button class="btn-primary wide" type="submit">Sign In</button>
 
-        <button type="submit" id="submitBtn" class="btn btn-primary btn-block">
-          <span class="btn-label">Sign In</span>
-          <span class="btn-progress" aria-hidden="true">
-            <span class="dots"><i></i><i></i><i></i></span>
-          </span>
-        </button>
-
-        <!-- <div class="form-row extra-controls">
-          <label class="checkbox tiny">
-            <input type="checkbox" id="showPassword">
-            <span>Show password</span>
-          </label>
-        </div> -->
+        <p class="form-note">Session secured with HTTP-only cookies. {{ settings.APP_NAME or "HDD Browser" }}</p>
       </form>
-
-      <footer class="auth-footer">
-        <p class="foot-note">
-          Session secured with HTTP-only cookies.
-          {% if settings %}
-            <span class="app-name-tag">{{ settings.APP_NAME }}</span>
-          {% endif %}
-        </p>
-      </footer>
-    </div>
+    </section>
   </div>
-</div>
-{% endblock %}
 
-{% block scripts %}
-<script src="/static/js/auth.js"></script>
+  <footer class="auth-footer">
+    <span>© {{ 2025 }} Atharva's NAS • Enhanced UI</span>
+    <span class="footer-meta">Optimized • Reactive • Themed</span>
+  </footer>
+</div>
+
+<script>
+  // Password toggle and dismissible alert
+  (function(){
+    const pw = document.getElementById("password");
+    const toggle = document.getElementById("pwToggle");
+    if (toggle && pw) {
+      toggle.addEventListener("click", () => {
+        const vis = pw.getAttribute("type") === "text";
+        pw.setAttribute("type", vis ? "password" : "text");
+        toggle.setAttribute("aria-pressed", String(!vis));
+      });
+    }
+    document.querySelectorAll("[data-alert-close]").forEach(btn => {
+      btn.addEventListener("click", () => btn.closest(".auth-alert")?.remove());
+    });
+  })();
+</script>
 {% endblock %}

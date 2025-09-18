@@ -1,0 +1,2 @@
+/* Legacy shim: keep older templates happy by importing the new styles */
+@import url("./styles.css");
