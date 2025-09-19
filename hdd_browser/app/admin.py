@@ -349,13 +349,12 @@ async def admin_stats(request: Request):
         else:
             unreachable.append({"path": str(p), "reason": reason})
 
-    # Quick per-root scans (existing behavior)
+    # Quick per-root scans (partial)
     roots_info: List[Dict] = []
     total_files = 0
     total_dirs = 0
     total_bytes = 0
     any_partial = False
-
     for p in reachable:
         res = _scan_root_quick(p, ADMIN_STATS_TIME_BUDGET_SEC, ADMIN_STATS_MAX_ENTRIES_PER_ROOT, ADMIN_STATS_BYTES)
         roots_info.append(res)
@@ -367,19 +366,20 @@ async def admin_stats(request: Request):
 
     drives = discover_drives()
 
-    # Compute capacity across ALL configured roots (not just reachable), without blocking on existence
+    # True device capacity (this is what the chart should use)
     try:
         dedup_paths = [Path(r).expanduser() for r in dedup]
         caps = compute_capacity(dedup_paths)
         capacity_total_bytes = caps.get("capacity_total_bytes")
         capacity_used_bytes = caps.get("capacity_used_bytes")
         capacity_free_bytes = caps.get("capacity_free_bytes")
-        capacity_per_root = caps.get("capacity_per_root")  # NEW: per-root device breakdown
+        capacity_per_root = caps.get("capacity_per_root") or []
     except Exception as e:
         print(f"[admin] capacity compute failed: {e}")
         capacity_total_bytes = capacity_used_bytes = capacity_free_bytes = None
         capacity_per_root = []
 
+    # Thumb cache size (time-boxed)
     thumb_dir = Path(s.THUMB_CACHE_DIR)
     thumb_bytes = 0
     thumb_partial = False
@@ -397,13 +397,14 @@ async def admin_stats(request: Request):
             "roots_raw": dedup,
             "roots": [str(p) for p in reachable],
             "unreachable_roots": unreachable,
-            "roots_info": roots_info,
+            "roots_info": roots_info,                 # quick scan (may be partial)
             "total_files": total_files,
             "total_dirs": total_dirs,
-            "total_bytes": total_bytes,  # retained for compatibility
+            "total_bytes": total_bytes,               # legacy
             "capacity_total_bytes": capacity_total_bytes,
             "capacity_used_bytes": capacity_used_bytes,
             "capacity_free_bytes": capacity_free_bytes,
+            "capacity_per_root": capacity_per_root,   # add this line
             "thumb_cache_bytes": thumb_bytes,
             "uptime_sec": uptime_sec,
             "features": _current_features(),

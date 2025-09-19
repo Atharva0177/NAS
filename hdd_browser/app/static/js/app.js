@@ -2,12 +2,13 @@
 // Utility / Helpers
 // =============================
 async function fetchJSON(url) {
-  const r = await fetch(url, { credentials: "same-origin" });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const r = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+  if (!r.ok) throw new Error(await r.text().catch(() => r.statusText || `HTTP ${r.status}`));
   return await r.json();
 }
 
 function formatSize(bytes) {
+  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "–";
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(2) + " GB";
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(2) + " MB";
   if (bytes >= 1e3) return (bytes / 1e3).toFixed(2) + " KB";
@@ -28,23 +29,107 @@ document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("searchForm")) initSearch();
 });
 
-// Lazy-load thumbnails with IntersectionObserver
+// =============================
+// Thumbnail queue with deterministic order
+// =============================
+
+// Allow override from window.THUMB_MAX_CONC; default 1 for strict serial ordering.
+const THUMB_MAX_CONC = Math.max(1, Number(window.THUMB_MAX_CONC || 1));
+
+class ThumbQueue {
+  constructor(max = 1) {
+    this.max = Math.max(1, max);
+    this.q = []; // FIFO
+    this.running = 0;
+    this.paused = false;
+    this.controllers = new Set();
+  }
+  enqueue(imgEl, url) {
+    if (!imgEl || !url) return;
+    if (imgEl.dataset.loaded === "1") return;
+    if (imgEl.src) return; // already loading/loaded
+    // Store a stable sequence key taken from data-seq if present
+    const seq = Number(imgEl.dataset.seq || 0);
+    this.q.push({ imgEl, url, seq });
+    // Keep queue ordered by seq for determinism
+    this.q.sort((a, b) => a.seq - b.seq);
+    this._pump();
+  }
+  pause(abortAll = false) {
+    this.paused = true;
+    if (abortAll) this.abortAll();
+  }
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    this._pump();
+  }
+  abortAll() {
+    for (const c of this.controllers) {
+      try { c.abort(); } catch {}
+    }
+    this.controllers.clear();
+    // Drop queued items; they will be re-queued if they re-enter viewport
+    this.q = [];
+  }
+  async _loadOne({ imgEl, url }) {
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    try {
+      imgEl.setAttribute("fetchpriority", "low");
+      const resp = await fetch(url, { signal: controller.signal, credentials: "same-origin", cache: "force-cache" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const objURL = URL.createObjectURL(blob);
+      imgEl.src = objURL;
+      imgEl.decoding = "async";
+      imgEl.loading = "lazy";
+      imgEl.dataset.loaded = "1";
+      // Revoke later to allow paint
+      setTimeout(() => URL.revokeObjectURL(objURL), 20000);
+    } finally {
+      this.controllers.delete(controller);
+    }
+  }
+  _pump() {
+    if (this.paused) return;
+    while (this.running < this.max && this.q.length) {
+      const task = this.q.shift(); // FIFO
+      this.running++;
+      this._loadOne(task).catch(() => {}).finally(() => {
+        this.running--;
+        this._pump();
+      });
+    }
+  }
+}
+
+const thumbQueue = new ThumbQueue(THUMB_MAX_CONC);
+window.__thumbQueue = thumbQueue; // for debugging
+
+// Lazy-load thumbnails with IntersectionObserver (queueing in stable order)
 let thumbObserver = null;
 if ("IntersectionObserver" in window) {
   thumbObserver = new IntersectionObserver(
     (entries, obs) => {
-      entries.forEach((e) => {
-        if (e.isIntersecting) {
-          const img = e.target;
-          if (img.dataset && img.dataset.src) {
-            img.src = img.dataset.src;
-            img.removeAttribute("data-src");
-          }
-          obs.unobserve(img);
+      // Collect visible images, sort by their data-seq to keep order deterministic
+      const ready = [];
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const img = e.target;
+        if (img?.dataset?.src) {
+          ready.push(img);
         }
-      });
+        obs.unobserve(img);
+      }
+      ready.sort((a, b) => Number(a.dataset.seq || 0) - Number(b.dataset.seq || 0));
+      for (const img of ready) {
+        const url = img.dataset.src;
+        img.removeAttribute("data-src");
+        thumbQueue.enqueue(img, url);
+      }
     },
-    { rootMargin: "200px 0px" }
+    { rootMargin: "100px 0px" }
   );
 }
 
@@ -64,14 +149,14 @@ function prefetchImage(url) {
 function isPreviewableImage(mime, name) {
   const ext = (name || "").toLowerCase().split(".").pop();
   return (
-    ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif"].includes(ext) ||
+    ["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif", "tiff"].includes(ext) ||
     (mime && mime.startsWith("image/"))
   );
 }
 function isPreviewableVideo(mime, name) {
   const ext = (name || "").toLowerCase().split(".").pop();
   return (
-    ["mp4", "webm", "mov", "m4v", "avi", "mkv"].includes(ext) ||
+    ["mp4", "webm", "mov", "m4v", "avi", "mkv", "ogg"].includes(ext) ||
     (mime && mime.startsWith("video/"))
   );
 }
@@ -83,7 +168,7 @@ function isMedia(mime, name) {
 // Simple Media Modal
 // =============================
 let _mediaModalZ = 1000;
-function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNext }) {
+function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNext, onClose }) {
   const backdrop = document.createElement("div");
   backdrop.className = "media-modal-backdrop";
   backdrop.style.zIndex = String(_mediaModalZ++);
@@ -170,15 +255,27 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
       }
     } catch {}
     backdrop.remove();
+    if (typeof onClose === "function") {
+      try { onClose(); } catch {}
+    }
   }
 
-  closeBtn?.addEventListener("click", cleanup);
+  closeBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cleanup();
+  });
+  // Only close when clicking directly on the backdrop (not inside the box)
   backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) cleanup();
+    if (e.target === backdrop) {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup();
+    }
   });
 
-  if (prevBtn && onPrev) prevBtn.addEventListener("click", onPrev);
-  if (nextBtn && onNext) nextBtn.addEventListener("click", onNext);
+  if (prevBtn && onPrev) prevBtn.addEventListener("click", (e) => { e.stopPropagation(); onPrev(); });
+  if (nextBtn && onNext) nextBtn.addEventListener("click", (e) => { e.stopPropagation(); onNext(); });
 
   setMedia({ title, type, src, downloadHref, poster });
   return { setMedia, close: cleanup };
@@ -216,6 +313,9 @@ async function initBrowser() {
   let galleryIndex = -1;
   let modalAPI = null;
 
+  // Deterministic sequence assignment for grid images
+  let seqCounter = 1;
+
   // Expose a minimal API for other inline scripts if needed
   function exposeGlobals() {
     window.__currentDrive = currentDrive;
@@ -234,7 +334,6 @@ async function initBrowser() {
   // Load drives
   try {
     const drives = await fetchJSON("/api/drives");
-    // Normalize to array of {id, label}
     const opts = Array.isArray(drives)
       ? drives.map((d) =>
           typeof d === "string"
@@ -242,7 +341,6 @@ async function initBrowser() {
             : { id: d.id || d.drive_id || d.name || d.path || "", label: d.label || d.name || d.path || d.id || "" }
         )
       : [];
-    // Populate select
     driveSelect.innerHTML = "";
     for (const d of opts) {
       if (!d.id) continue;
@@ -251,7 +349,6 @@ async function initBrowser() {
       opt.textContent = d.label || d.id;
       driveSelect.appendChild(opt);
     }
-    // Choose current drive if missing
     if (!currentDrive && driveSelect.options.length) {
       currentDrive = driveSelect.options[0].value;
     }
@@ -268,6 +365,7 @@ async function initBrowser() {
     relPath = "";
     exposeGlobals();
     syncUploadHidden();
+    thumbQueue.abortAll(); // abort outstanding thumbs when switching drives
     loadDir();
   });
 
@@ -278,6 +376,7 @@ async function initBrowser() {
     relPath = parts.join("/");
     exposeGlobals();
     syncUploadHidden();
+    thumbQueue.abortAll(); // abort outstanding thumbs when navigating up
     loadDir();
   });
 
@@ -336,21 +435,16 @@ async function initBrowser() {
 
     // Press-and-hold (550ms) triggers folder picker (touch or mouse)
     let lpTimer = null;
-    let lpFired = false;
-
     function clearLP() {
       if (lpTimer) {
         clearTimeout(lpTimer);
         lpTimer = null;
       }
     }
-
     uploadBtn?.addEventListener("pointerdown", (e) => {
       if (!ensureContext()) return;
-      lpFired = false;
       clearLP();
       lpTimer = setTimeout(() => {
-        lpFired = true;
         folderInput?.click();
       }, 550);
     });
@@ -468,6 +562,7 @@ async function initBrowser() {
       entriesDiv.innerHTML = "<p>Select a drive</p>";
       return;
     }
+    seqCounter = 1; // reset deterministic sequence for this folder render
     const url = `/api/list?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath)}`;
     try {
       const data = await fetchJSON(url);
@@ -509,6 +604,12 @@ async function initBrowser() {
     gallery = currentEntries.filter((e) => !e.is_dir && isMedia(e.mime, e.name));
   }
 
+  // Briefly pause thumbnail work to prioritize media open (do NOT abort to avoid flicker)
+  function deprioritizeThumbsFor(ms = 4000) {
+    thumbQueue.pause(false);
+    setTimeout(() => thumbQueue.resume(), ms);
+  }
+
   // Compute URLs for a given entry (also optimizes image/video display)
   function mediaSourceFor(entry) {
     const path = relPath ? `${relPath}/${entry.name}` : entry.name;
@@ -536,6 +637,9 @@ async function initBrowser() {
     buildGallery();
     galleryIndex = gallery.findIndex((e) => e.name === entry.name);
     if (galleryIndex === -1 && gallery.length) galleryIndex = 0;
+
+    // Pause thumbnails briefly so the media loads without waiting (no abort)
+    deprioritizeThumbsFor(4000);
 
     const current = gallery.length ? gallery[galleryIndex] : entry;
     const currentMedia = mediaSourceFor(current);
@@ -570,6 +674,10 @@ async function initBrowser() {
       poster: currentMedia.poster,
       onPrev: gallery.length > 1 ? () => navigate(-1) : null,
       onNext: gallery.length > 1 ? () => navigate(+1) : null,
+      onClose: () => {
+        // After the modal closes, resume thumbnail loading if it was paused
+        thumbQueue.resume();
+      }
     });
     modalAPI = api;
 
@@ -589,11 +697,14 @@ async function initBrowser() {
     fetchJSON(url)
       .then((data) => renderInlinePreview(data))
       .catch((e) => {
-        previewDiv.innerHTML = `<p>Preview error: ${escapeHtml(e.message)}</p>`;
+        const previewDiv = document.getElementById("preview");
+        if (previewDiv) previewDiv.innerHTML = `<p>Preview error: ${escapeHtml(e.message)}</p>`;
       });
   }
 
   function renderInlinePreview(data) {
+    const previewDiv = document.getElementById("preview");
+    if (!previewDiv) return;
     if (!data.mime && !data.name) {
       previewDiv.innerHTML = "<p>No preview.</p>";
       return;
@@ -654,10 +765,12 @@ async function initBrowser() {
       const link = tr.querySelector("a");
       link.addEventListener("click", (e) => {
         e.preventDefault();
+        e.stopPropagation();
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
           exposeGlobals();
           syncUploadHidden();
+          thumbQueue.abortAll(); // abort thumbnails on folder navigation
           loadDir();
         } else {
           if (isMedia(ent.mime, ent.name)) {
@@ -668,9 +781,11 @@ async function initBrowser() {
         }
       });
       tr.querySelectorAll("button[data-action]").forEach((btn) => {
-        btn.addEventListener("click", () =>
-          handleAction(btn.dataset.action, ent.name, ent.is_dir)
-        );
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          handleAction(btn.dataset.action, ent.name, ent.is_dir);
+        });
       });
       tbody.appendChild(tr);
     });
@@ -699,7 +814,8 @@ async function initBrowser() {
       if (ent.is_dir) {
         mediaHTML = `<div class="thumb-glyph folder-glyph">📁</div>`;
       } else if (enableThumbs && isPreviewableImage(ent.mime, ent.name)) {
-        mediaHTML = `<img data-thumb="true" alt="${escapeHtml(ent.name)}" loading="lazy" decoding="async" />`;
+        // mark low priority
+        mediaHTML = `<img data-thumb="true" fetchpriority="low" alt="${escapeHtml(ent.name)}" loading="lazy" decoding="async" />`;
       } else if (enableThumbs && isPreviewableVideo(ent.mime, ent.name)) {
         mediaHTML = `<div class="thumb-glyph video-glyph">🎬</div>`;
       } else {
@@ -710,11 +826,14 @@ async function initBrowser() {
         <div class="thumb-name" title="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</div>
         <div class="thumb-meta">${ent.is_dir ? "DIR" : formatSize(ent.size)}</div>
       `;
-      card.addEventListener("click", () => {
+      card.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
           exposeGlobals();
           syncUploadHidden();
+          thumbQueue.abortAll(); // abort thumbnails on folder navigation
           loadDir();
         } else {
           if (isMedia(ent.mime, ent.name)) {
@@ -729,6 +848,8 @@ async function initBrowser() {
       if (enableThumbs && !ent.is_dir && isPreviewableImage(ent.mime, ent.name)) {
         const imgEl = card.querySelector("img[data-thumb]");
         if (imgEl) {
+          // Assign deterministic sequence number in render order
+          imgEl.dataset.seq = String(seqCounter++);
           const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(
             path
           )}&size=180`;
@@ -736,7 +857,7 @@ async function initBrowser() {
             imgEl.dataset.src = thumbURL;
             thumbObserver.observe(imgEl);
           } else {
-            imgEl.src = thumbURL;
+            thumbQueue.enqueue(imgEl, thumbURL);
           }
         }
       }
@@ -748,8 +869,7 @@ async function initBrowser() {
     }
   }
 
-  // Replace only the handleAction function with this updated one
-
+  // Actions
   async function handleAction(action, name, isDir) {
     if (action === "preview" && !isDir) {
       const entry = currentEntries.find((e) => e.name === name);
