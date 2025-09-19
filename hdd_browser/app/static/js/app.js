@@ -24,100 +24,91 @@ function escapeHtml(s) {
     .replace(/'/g, "&#039;");
 }
 
+function absoluteHref(pathOrUrl) {
+  try {
+    return new URL(pathOrUrl, window.location.origin).href;
+  } catch {
+    return pathOrUrl;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("driveSelect")) initBrowser();
   if (document.getElementById("searchForm")) initSearch();
 });
 
 // =============================
-// Thumbnail queue with deterministic order
+// Thumbnail queue with deterministic order (no blob:, serial by default)
 // =============================
 
-// Allow override from window.THUMB_MAX_CONC; default 1 for strict serial ordering.
+// Override with window.THUMB_MAX_CONC to increase concurrency. Default 1 = strict serial.
 const THUMB_MAX_CONC = Math.max(1, Number(window.THUMB_MAX_CONC || 1));
 
 class ThumbQueue {
   constructor(max = 1) {
     this.max = Math.max(1, max);
-    this.q = []; // FIFO
+    this.q = []; // FIFO tasks {imgEl, url, seq}
     this.running = 0;
     this.paused = false;
-    this.controllers = new Set();
+    this._resumeTimer = null;
   }
-  enqueue(imgEl, url) {
+  enqueue(imgEl, url, seq = 0) {
     if (!imgEl || !url) return;
     if (imgEl.dataset.loaded === "1") return;
-    if (imgEl.src) return; // already loading/loaded
-    // Store a stable sequence key taken from data-seq if present
-    const seq = Number(imgEl.dataset.seq || 0);
-    this.q.push({ imgEl, url, seq });
-    // Keep queue ordered by seq for determinism
+    if (imgEl.dataset.loading === "1") return;
+    const s = Number(seq || imgEl.dataset.seq || 0);
+    this.q.push({ imgEl, url, seq: s });
     this.q.sort((a, b) => a.seq - b.seq);
     this._pump();
   }
-  pause(abortAll = false) {
-    this.paused = true;
-    if (abortAll) this.abortAll();
-  }
-  resume() {
-    if (!this.paused) return;
-    this.paused = false;
-    this._pump();
-  }
-  abortAll() {
-    for (const c of this.controllers) {
-      try { c.abort(); } catch {}
-    }
-    this.controllers.clear();
-    // Drop queued items; they will be re-queued if they re-enter viewport
-    this.q = [];
-  }
-  async _loadOne({ imgEl, url }) {
-    const controller = new AbortController();
-    this.controllers.add(controller);
-    try {
+  pause() { this.paused = true; }
+  resume() { this.paused = false; this._pump(); }
+  clearQueue() { this.q = []; }
+  _startImageLoad(imgEl, url) {
+    return new Promise((resolve) => {
+      const opts = { once: true };
+      const done = () => {
+        imgEl.removeEventListener("load", onLoad, opts);
+        imgEl.removeEventListener("error", onError, opts);
+        imgEl.dataset.loading = "0";
+        resolve();
+      };
+      const onLoad = () => { imgEl.dataset.loaded = "1"; done(); };
+      const onError = () => { done(); };
+      imgEl.addEventListener("load", onLoad, opts);
+      imgEl.addEventListener("error", onError, opts);
       imgEl.setAttribute("fetchpriority", "low");
-      const resp = await fetch(url, { signal: controller.signal, credentials: "same-origin", cache: "force-cache" });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      const objURL = URL.createObjectURL(blob);
-      imgEl.src = objURL;
       imgEl.decoding = "async";
       imgEl.loading = "lazy";
-      imgEl.dataset.loaded = "1";
-      // Revoke later to allow paint
-      setTimeout(() => URL.revokeObjectURL(objURL), 20000);
-    } finally {
-      this.controllers.delete(controller);
-    }
+      imgEl.dataset.loading = "1";
+      imgEl.src = url;
+    });
   }
   _pump() {
     if (this.paused) return;
     while (this.running < this.max && this.q.length) {
-      const task = this.q.shift(); // FIFO
+      const task = this.q.shift();
       this.running++;
-      this._loadOne(task).catch(() => {}).finally(() => {
-        this.running--;
-        this._pump();
-      });
+      this._startImageLoad(task.imgEl, task.url)
+        .catch(() => {})
+        .finally(() => { this.running--; this._pump(); });
     }
   }
 }
 
 const thumbQueue = new ThumbQueue(THUMB_MAX_CONC);
-window.__thumbQueue = thumbQueue; // for debugging
+window.__thumbQueue = thumbQueue; // debug handle
 
 // Lazy-load thumbnails with IntersectionObserver (queueing in stable order)
 let thumbObserver = null;
 if ("IntersectionObserver" in window) {
   thumbObserver = new IntersectionObserver(
     (entries, obs) => {
-      // Collect visible images, sort by their data-seq to keep order deterministic
       const ready = [];
       for (const e of entries) {
         if (!e.isIntersecting) continue;
         const img = e.target;
-        if (img?.dataset?.src) {
+        if (img?.dataset?.src && img.dataset.queued !== "1") {
           ready.push(img);
         }
         obs.unobserve(img);
@@ -125,8 +116,8 @@ if ("IntersectionObserver" in window) {
       ready.sort((a, b) => Number(a.dataset.seq || 0) - Number(b.dataset.seq || 0));
       for (const img of ready) {
         const url = img.dataset.src;
-        img.removeAttribute("data-src");
-        thumbQueue.enqueue(img, url);
+        img.dataset.queued = "1";
+        thumbQueue.enqueue(img, url, Number(img.dataset.seq || 0));
       }
     },
     { rootMargin: "100px 0px" }
@@ -165,7 +156,7 @@ function isMedia(mime, name) {
 }
 
 // =============================
-// Simple Media Modal
+// Simple Media Modal (images/videos)
 // =============================
 let _mediaModalZ = 1000;
 function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNext, onClose }) {
@@ -260,25 +251,190 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
     }
   }
 
-  closeBtn?.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    cleanup();
-  });
-  // Only close when clicking directly on the backdrop (not inside the box)
-  backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) {
-      e.preventDefault();
-      e.stopPropagation();
-      cleanup();
-    }
-  });
+  // Close button and backdrop click (clicking outside box only)
+  closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
 
   if (prevBtn && onPrev) prevBtn.addEventListener("click", (e) => { e.stopPropagation(); onPrev(); });
   if (nextBtn && onNext) nextBtn.addEventListener("click", (e) => { e.stopPropagation(); onNext(); });
 
+  // ESC to close
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      cleanup();
+      window.removeEventListener("keydown", onKey, true);
+    }
+  };
+  window.addEventListener("keydown", onKey, true);
+
   setMedia({ title, type, src, downloadHref, poster });
   return { setMedia, close: cleanup };
+}
+
+// =============================
+// Text / Code Modal (json/jso, py, ipynb, csv, txt, cpp)
+// =============================
+function createTextModal({ title, text, downloadHref, truncated }) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "media-modal-backdrop";
+  backdrop.style.zIndex = String(++_mediaModalZ);
+
+  const box = document.createElement("div");
+  box.className = "media-modal-box";
+  box.innerHTML = `
+    <div class="media-modal-header">
+      <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
+      <div class="media-modal-actions">
+        ${downloadHref ? `<a class="media-modal-btn media-modal-download" href="${downloadHref}" download>Download</a>` : ""}
+        <button class="media-modal-btn media-modal-copy" aria-label="Copy">Copy</button>
+        <button class="media-modal-btn media-modal-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="media-modal-body" style="display:block;">
+      ${truncated ? `<div class="muted small" style="margin-bottom:6px;">Note: Preview truncated</div>` : ""}
+      <pre class="modal-code" style="max-height:70vh;overflow:auto;white-space:pre;line-height:1.4;background:rgba(0,0,0,.06);padding:12px;border-radius:8px;"><code></code></pre>
+    </div>
+  `;
+
+  const codeEl = box.querySelector("code");
+  codeEl.textContent = text || "";
+
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  const closeBtn = box.querySelector(".media-modal-close");
+  const copyBtn = box.querySelector(".media-modal-copy");
+
+  function cleanup() { backdrop.remove(); }
+
+  closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
+  copyBtn?.addEventListener("click", async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(codeEl.textContent || "");
+      copyBtn.textContent = "Copied";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+    } catch {
+      copyBtn.textContent = "Failed";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+    }
+  });
+
+  return { close: cleanup };
+}
+
+function shouldOpenTextModal(name, mime) {
+  const ext = (name || "").toLowerCase().split(".").pop();
+  // Modalize these as text/code
+  const modalExts = new Set(["jso", "json", "py", "ipynb", "csv", "txt", "cpp"]);
+  if (modalExts.has(ext)) return true;
+  if (mime && (mime.startsWith("text/") || mime.includes("json"))) return true;
+  return false;
+}
+
+// Fallback: fetch file text when /api/preview has no text (e.g., ipynb/csv)
+async function fetchTextPreview(downloadHref, ext) {
+  const MAX_BYTES = 1_500_000; // ~1.5MB
+  const MAX_LINES = 2000;      // cap lines for CSV/TXT
+  try {
+    const r = await fetch(downloadHref, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    let truncated = false;
+    let text;
+    if (blob.size > MAX_BYTES) {
+      text = await blob.slice(0, MAX_BYTES).text();
+      truncated = true;
+    } else {
+      text = await blob.text();
+    }
+    const lowerExt = (ext || "").toLowerCase();
+    if (["ipynb", "json", "jso"].includes(lowerExt)) {
+      try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+    } else if (["csv", "txt"].includes(lowerExt)) {
+      const lines = text.split(/\r?\n/);
+      if (lines.length > MAX_LINES) {
+        text = lines.slice(0, MAX_LINES).join("\n");
+        truncated = true;
+      }
+    }
+    return { text, truncated };
+  } catch {
+    return null;
+  }
+}
+
+// =============================
+// Document Modal (PDF embed; Office via Office Online Viewer)
+// =============================
+function createDocModal({ title, pdfObjectUrl, officeEmbedUrl, downloadHref, mime, note }) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "media-modal-backdrop";
+  backdrop.style.zIndex = String(++_mediaModalZ);
+
+  const box = document.createElement("div");
+  box.className = "media-modal-box";
+  const bodyInner = (() => {
+    if (pdfObjectUrl) {
+      return `<iframe class="doc-frame" title="Document" style="width:100%;height:70vh;border:0;background:#fff;" src="${pdfObjectUrl}"></iframe>`;
+    }
+    if (officeEmbedUrl) {
+      return `<iframe class="doc-frame" title="Document" style="width:100%;height:70vh;border:0;background:#fff;" src="${officeEmbedUrl}"></iframe>
+              <div class="muted small" style="margin-top:6px;">If the viewer doesn't load, the file may not be publicly reachable by Office Online. Use Open or Download.</div>`;
+    }
+    return `
+      <div class="muted" style="margin:8px 0 12px;">
+        ${escapeHtml(note || "Preview not supported in-browser. Use Open or Download.")}
+      </div>`;
+  })();
+
+  box.innerHTML = `
+    <div class="media-modal-header">
+      <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
+      <div class="media-modal-actions">
+        ${downloadHref ? `<a class="media-modal-btn media-modal-download" href="${downloadHref}" target="_blank">Open</a>` : ""}
+        ${downloadHref ? `<a class="media-modal-btn" href="${downloadHref}" download>Download</a>` : ""}
+        <button class="media-modal-btn media-modal-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="media-modal-body" style="display:block;">
+      ${bodyInner}
+    </div>
+  `;
+
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  const closeBtn = box.querySelector(".media-modal-close");
+  function cleanup() {
+    try { if (pdfObjectUrl && pdfObjectUrl.startsWith("blob:")) URL.revokeObjectURL(pdfObjectUrl); } catch {}
+    backdrop.remove();
+  }
+  closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
+
+  // ESC to close
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      cleanup();
+      window.removeEventListener("keydown", onKey, true);
+    }
+  };
+  window.addEventListener("keydown", onKey, true);
+
+  return { close: cleanup };
+}
+
+function shouldOpenDocModal(name, mime) {
+  const ext = (name || "").toLowerCase().split(".").pop();
+  // Docs we show in a doc modal: PDF, Office formats
+  const docExts = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
+  if (docExts.has(ext)) return true;
+  if (mime && (mime === "application/pdf" || mime.startsWith("application/vnd.openxmlformats"))) return true;
+  return false;
 }
 
 // =============================
@@ -316,14 +472,12 @@ async function initBrowser() {
   // Deterministic sequence assignment for grid images
   let seqCounter = 1;
 
-  // Expose a minimal API for other inline scripts if needed
   function exposeGlobals() {
     window.__currentDrive = currentDrive;
     window.__relPath = relPath || "";
     window.loadDir = loadDir;
   }
 
-  // Keep the upload hidden inputs in sync (if present)
   function syncUploadHidden() {
     const d = document.getElementById("uploadDrive");
     const p = document.getElementById("uploadRelPath");
@@ -352,9 +506,7 @@ async function initBrowser() {
     if (!currentDrive && driveSelect.options.length) {
       currentDrive = driveSelect.options[0].value;
     }
-    if (currentDrive) {
-      driveSelect.value = currentDrive;
-    }
+    if (currentDrive) driveSelect.value = currentDrive;
   } catch (e) {
     console.error("Failed to load drives:", e);
   }
@@ -365,7 +517,7 @@ async function initBrowser() {
     relPath = "";
     exposeGlobals();
     syncUploadHidden();
-    thumbQueue.abortAll(); // abort outstanding thumbs when switching drives
+    thumbQueue.clearQueue(); // drop pending thumbs
     loadDir();
   });
 
@@ -376,7 +528,7 @@ async function initBrowser() {
     relPath = parts.join("/");
     exposeGlobals();
     syncUploadHidden();
-    thumbQueue.abortAll(); // abort outstanding thumbs when navigating up
+    thumbQueue.clearQueue();
     loadDir();
   });
 
@@ -393,7 +545,6 @@ async function initBrowser() {
     });
   }
 
-  // Upload wiring: single button supports files (default) and folders (Alt/right-click/press-hold).
   (function wireUpload() {
     const uploadSection = document.getElementById("uploadSection");
     if (uploadSection && enableUpload) uploadSection.style.display = "block";
@@ -403,122 +554,68 @@ async function initBrowser() {
     const folderInput = document.getElementById("folderInput");
     const resultEl = document.getElementById("uploadResult");
 
-    function setStatus(msg) {
-      if (resultEl) resultEl.textContent = msg || "";
-    }
+    function setStatus(msg) { if (resultEl) resultEl.textContent = msg || ""; }
 
     function ensureContext() {
-      if (!currentDrive) {
-        alert("Select a drive before uploading.");
-        return false;
-      }
+      if (!currentDrive) { alert("Select a drive before uploading."); return false; }
       return true;
     }
 
-    // Click: files by default; Alt/Option-click: folder
     uploadBtn?.addEventListener("click", (e) => {
       e.preventDefault();
       if (!ensureContext()) return;
-      if (e.altKey) {
-        folderInput?.click();
-      } else {
-        fileInput?.click();
-      }
+      if (e.altKey) folderInput?.click(); else fileInput?.click();
     });
+    uploadBtn?.addEventListener("contextmenu", (e) => { e.preventDefault(); if (!ensureContext()) return; folderInput?.click(); });
 
-    // Right-click opens folder picker
-    uploadBtn?.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      if (!ensureContext()) return;
-      folderInput?.click();
-    });
-
-    // Press-and-hold (550ms) triggers folder picker (touch or mouse)
     let lpTimer = null;
-    function clearLP() {
-      if (lpTimer) {
-        clearTimeout(lpTimer);
-        lpTimer = null;
-      }
-    }
-    uploadBtn?.addEventListener("pointerdown", (e) => {
-      if (!ensureContext()) return;
-      clearLP();
-      lpTimer = setTimeout(() => {
-        folderInput?.click();
-      }, 550);
-    });
-    uploadBtn?.addEventListener("pointerup", () => clearLP());
-    uploadBtn?.addEventListener("pointerleave", () => clearLP());
+    function clearLP() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }
+    uploadBtn?.addEventListener("pointerdown", () => { if (!ensureContext()) return; clearLP(); lpTimer = setTimeout(() => folderInput?.click(), 550); });
+    uploadBtn?.addEventListener("pointerup", clearLP);
+    uploadBtn?.addEventListener("pointerleave", clearLP);
 
-    // Core upload: iterate files, preserve directory structure with webkitRelativePath
     async function uploadFiles(list) {
-      if (!ensureContext()) return;
-      if (!list || list.length === 0) return;
-
+      if (!ensureContext() || !list || !list.length) return;
       const total = list.length;
       let done = 0, ok = 0, failed = 0;
-
-      // Limit concurrency to avoid overloading server
       const CONC = 3;
       let idx = 0;
 
       function nextJob() {
         if (idx >= total) return null;
         const f = list[idx++];
-        // Preserve folder structure from directory picker; for regular files this is ""
         const relFull = (f.webkitRelativePath && f.webkitRelativePath.length > 0) ? f.webkitRelativePath : f.name;
         const subDir = relFull.includes("/") ? relFull.split("/").slice(0, -1).join("/") : "";
         const targetRelDir = [relPath || "", subDir].filter(Boolean).join("/");
-
         return async () => {
           const form = new FormData();
           form.append("drive_id", currentDrive);
-          form.append("rel_path", targetRelDir); // nested target directory
+          form.append("rel_path", targetRelDir);
           form.append("file", f, f.name);
-
           try {
             const r = await fetch("/api/upload", { method: "POST", body: form, credentials: "same-origin" });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             ok++;
-          } catch (_err) {
-            failed++;
-          } finally {
-            done++;
-            setStatus(`Uploading ${done}/${total}… (ok: ${ok}, failed: ${failed})`);
+          } catch { failed++; } finally {
+            done++; setStatus(`Uploading ${done}/${total}… (ok: ${ok}, failed: ${failed})`);
           }
         };
       }
 
       setStatus(`Uploading 0/${total}…`);
-      // Simple worker pool
       const workers = Array.from({ length: Math.min(CONC, total) }, async () => {
-        while (true) {
-          const job = nextJob();
-          if (!job) break;
-          await job();
-        }
+        while (true) { const job = nextJob(); if (!job) break; await job(); }
       });
       await Promise.all(workers);
-
       setStatus(`Uploaded ${ok}/${total}${failed ? ` (failed: ${failed})` : ""}.`);
-      await loadDir(); // refresh listing
+      await loadDir();
     }
 
-    // On selection, trigger upload
-    fileInput?.addEventListener("change", async () => {
-      await uploadFiles(fileInput.files);
-      if (fileInput) fileInput.value = ""; // reset
-    });
-    folderInput?.addEventListener("change", async () => {
-      await uploadFiles(folderInput.files);
-      if (folderInput) folderInput.value = ""; // reset
-    });
+    fileInput?.addEventListener("change", async () => { await uploadFiles(fileInput.files); if (fileInput) fileInput.value = ""; });
+    folderInput?.addEventListener("change", async () => { await uploadFiles(folderInput.files); if (folderInput) folderInput.value = ""; });
   })();
 
-  // Sorting helpers
   function entryTypeRank(ent) {
-    // Folders first, then images, then videos, then others
     if (ent.is_dir) return 0;
     if (isPreviewableImage(ent.mime, ent.name)) return 1;
     if (isPreviewableVideo(ent.mime, ent.name)) return 2;
@@ -531,24 +628,10 @@ async function initBrowser() {
     const key = asc ? mode : mode.slice(1);
     const arr = entries.slice();
     arr.sort((a, b) => {
-      if (key === "type") {
-        const rA = entryTypeRank(a);
-        const rB = entryTypeRank(b);
-        return asc ? rA - rB : rB - rA;
-      }
-      if (key === "size") {
-        const sA = a.is_dir ? -1 : a.size || 0;
-        const sB = b.is_dir ? -1 : b.size || 0;
-        return asc ? sA - sB : sB - sA;
-      }
-      if (key === "modified") {
-        const mA = a.modified || 0;
-        const mB = b.modified || 0;
-        return asc ? mA - mB : mB - mA;
-      }
-      // name
-      const nA = (a.name || "").toLowerCase();
-      const nB = (b.name || "").toLowerCase();
+      if (key === "type") { const rA = entryTypeRank(a), rB = entryTypeRank(b); return asc ? rA - rB : rB - rA; }
+      if (key === "size") { const sA = a.is_dir ? -1 : a.size || 0, sB = b.is_dir ? -1 : b.size || 0; return asc ? sA - sB : sB - sA; }
+      if (key === "modified") { const mA = a.modified || 0, mB = b.modified || 0; return asc ? mA - mB : mB - mA; }
+      const nA = (a.name || "").toLowerCase(), nB = (b.name || "").toLowerCase();
       if (nA < nB) return asc ? -1 : 1;
       if (nA > nB) return asc ? 1 : -1;
       return 0;
@@ -558,29 +641,18 @@ async function initBrowser() {
 
   async function loadDir() {
     previewDiv.innerHTML = "";
-    if (!currentDrive) {
-      entriesDiv.innerHTML = "<p>Select a drive</p>";
-      return;
-    }
-    seqCounter = 1; // reset deterministic sequence for this folder render
+    if (!currentDrive) { entriesDiv.innerHTML = "<p>Select a drive</p>"; return; }
+    seqCounter = 1;
     const url = `/api/list?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(relPath)}`;
     try {
       const data = await fetchJSON(url);
       currentPathSpan.textContent = data.path || "";
       currentEntries = Array.isArray(data.entries) ? data.entries : [];
-      // reset gallery on dir change
-      gallery = [];
-      galleryIndex = -1;
-      modalAPI = null;
+      gallery = []; galleryIndex = -1; modalAPI = null;
       renderEntries(currentEntries);
-      // keep upload context synced with the current folder
       exposeGlobals();
       syncUploadHidden();
-      // show upload if allowed
-      if (enableUpload) {
-        const us = document.getElementById("uploadSection");
-        if (us) us.style.display = "block";
-      }
+      if (enableUpload) { const us = document.getElementById("uploadSection"); if (us) us.style.display = "block"; }
     } catch (e) {
       entriesDiv.innerHTML = `<p>Error: ${escapeHtml(e.message)}</p>`;
     }
@@ -588,29 +660,18 @@ async function initBrowser() {
 
   function renderEntries(entries) {
     const sorted = sortEntries(entries);
-    if (viewMode === "grid") {
-      renderGrid(sorted);
-    } else {
-      renderTable(sorted);
-    }
-    if (enableUpload) {
-      const us = document.getElementById("uploadSection");
-      if (us) us.style.display = "block";
-    }
+    if (viewMode === "grid") renderGrid(sorted); else renderTable(sorted);
+    if (enableUpload) { const us = document.getElementById("uploadSection"); if (us) us.style.display = "block"; }
   }
 
-  // Build gallery of media files in current directory
-  function buildGallery() {
-    gallery = currentEntries.filter((e) => !e.is_dir && isMedia(e.mime, e.name));
+  function buildGallery() { gallery = currentEntries.filter((e) => !e.is_dir && isMedia(e.mime, e.name)); }
+
+  function deprioritizeThumbsFor(ms = 3000) {
+    thumbQueue.pause();
+    if (thumbQueue._resumeTimer) clearTimeout(thumbQueue._resumeTimer);
+    thumbQueue._resumeTimer = setTimeout(() => thumbQueue.resume(), ms);
   }
 
-  // Briefly pause thumbnail work to prioritize media open (do NOT abort to avoid flicker)
-  function deprioritizeThumbsFor(ms = 4000) {
-    thumbQueue.pause(false);
-    setTimeout(() => thumbQueue.resume(), ms);
-  }
-
-  // Compute URLs for a given entry (also optimizes image/video display)
   function mediaSourceFor(entry) {
     const path = relPath ? `${relPath}/${entry.name}` : entry.name;
     const encodedRel = encodeURIComponent(path);
@@ -638,8 +699,7 @@ async function initBrowser() {
     galleryIndex = gallery.findIndex((e) => e.name === entry.name);
     if (galleryIndex === -1 && gallery.length) galleryIndex = 0;
 
-    // Pause thumbnails briefly so the media loads without waiting (no abort)
-    deprioritizeThumbsFor(4000);
+    deprioritizeThumbsFor(3000);
 
     const current = gallery.length ? gallery[galleryIndex] : entry;
     const currentMedia = mediaSourceFor(current);
@@ -674,10 +734,7 @@ async function initBrowser() {
       poster: currentMedia.poster,
       onPrev: gallery.length > 1 ? () => navigate(-1) : null,
       onNext: gallery.length > 1 ? () => navigate(+1) : null,
-      onClose: () => {
-        // After the modal closes, resume thumbnail loading if it was paused
-        thumbQueue.resume();
-      }
+      onClose: () => { thumbQueue.resume(); }
     });
     modalAPI = api;
 
@@ -691,11 +748,69 @@ async function initBrowser() {
     }
   }
 
+  // Non-media preview routing (text/code modal, or doc modal)
   function openNonMediaPreview(name) {
     const path = relPath ? `${relPath}/${name}` : name;
     const url = `/api/preview?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
+    const encodedDrive = encodeURIComponent(currentDrive);
+    const encodedRel = encodeURIComponent(path);
+    const downloadHref = `/api/download?drive_id=${encodedDrive}&rel_path=${encodedRel}`;
+
     fetchJSON(url)
-      .then((data) => renderInlinePreview(data))
+      .then(async (data) => {
+        const title = data?.name || name;
+        const mime = data?.mime || "";
+        const ext = (title || "").toLowerCase().split(".").pop();
+
+        if (shouldOpenTextModal(title, mime)) {
+          let text = data?.text || "";
+          let truncated = !!data?.truncated;
+          if (!text) {
+            const t = await fetchTextPreview(downloadHref, ext);
+            if (t) { text = t.text; truncated = truncated || t.truncated; }
+          } else {
+            if (["json", "jso", "ipynb"].includes(ext)) {
+              try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+            } else if (ext === "csv") {
+              const lines = text.split(/\r?\n/);
+              if (lines.length > 2000) { text = lines.slice(0, 2000).join("\n"); truncated = true; }
+            }
+          }
+          createTextModal({ title, text, downloadHref, truncated });
+          return;
+        }
+
+        if (shouldOpenDocModal(title, mime)) {
+          const abs = absoluteHref(downloadHref);
+          const isPdf = mime === "application/pdf" || ext === "pdf";
+          if (isPdf) {
+            // Embed PDF via blob for best compatibility
+            let pdfUrl = "";
+            try {
+              const r = await fetch(downloadHref, { credentials: "same-origin" });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const blob = await r.blob();
+              pdfUrl = URL.createObjectURL(blob);
+            } catch {}
+            createDocModal({ title, pdfObjectUrl: pdfUrl, officeEmbedUrl: "", downloadHref, mime: "application/pdf" });
+          } else {
+            // Office viewer embed (file must be publicly reachable by officeapps.live.com)
+            const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(abs)}`;
+            createDocModal({
+              title,
+              pdfObjectUrl: "",
+              officeEmbedUrl: officeUrl,
+              downloadHref,
+              mime,
+              note: "Preview not supported in-browser. Use Open or Download."
+            });
+          }
+          return;
+        }
+
+        // Fallback to bottom inline preview
+        renderInlinePreview(data);
+      })
       .catch((e) => {
         const previewDiv = document.getElementById("preview");
         if (previewDiv) previewDiv.innerHTML = `<p>Preview error: ${escapeHtml(e.message)}</p>`;
@@ -714,11 +829,17 @@ async function initBrowser() {
       (data.mime && (data.mime.startsWith("text/") || data.mime === "application/json")) ||
       (!data.mime && lowerName.match(/\.(txt|json|log|md|csv)$/))
     ) {
+      let body = data.text || "";
+      if (lowerName.endsWith(".json") || lowerName.endsWith(".ipynb") || lowerName.endsWith(".jso")) {
+        try { body = JSON.stringify(JSON.parse(body), null, 2); } catch {}
+      }
+      if (lowerName.endsWith(".csv")) {
+        const lines = body.split(/\r?\n/);
+        if (lines.length > 2000) body = lines.slice(0, 2000).join("\n") + "\n[TRUNCATED]";
+      }
       previewDiv.innerHTML = `<h3>Preview: ${escapeHtml(
         data.name
-      )}</h3><pre class="preview">${escapeHtml(data.text || "")}${
-        data.truncated ? "\n[TRUNCATED]" : ""
-      }</pre>`;
+      )}</h3><pre class="preview">${escapeHtml(body)}${data.truncated ? "\n[TRUNCATED]" : ""}</pre>`;
     } else {
       previewDiv.innerHTML = `<p>No inline preview for ${escapeHtml(data.name)} (${escapeHtml(
         data.mime || "unknown type"
@@ -727,23 +848,14 @@ async function initBrowser() {
   }
 
   function renderTable(entries) {
-    if (!entries.length) {
-      entriesDiv.innerHTML = "<p>(Empty)</p>";
-      return;
-    }
+    if (!entries.length) { entriesDiv.innerHTML = "<p>(Empty)</p>"; return; }
     const table = document.createElement("table");
     table.innerHTML = `
       <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
       <tbody></tbody>`;
     const tbody = table.querySelector("tbody");
     entries.forEach((ent) => {
-      const icon = ent.is_dir
-        ? "📁"
-        : isPreviewableImage(ent.mime, ent.name)
-        ? "🖼️"
-        : isPreviewableVideo(ent.mime, ent.name)
-        ? "🎬"
-        : "📄";
+      const icon = ent.is_dir ? "📁" : isPreviewableImage(ent.mime, ent.name) ? "🖼️" : isPreviewableVideo(ent.mime, ent.name) ? "🎬" : "📄";
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${icon} <a href="#" data-name="${escapeHtml(ent.name)}">${escapeHtml(ent.name)}</a></td>
@@ -756,7 +868,7 @@ async function initBrowser() {
               ? `<button data-action="preview" data-name="${escapeHtml(ent.name)}">Preview</button>
             <a href="/api/download?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(
                   relPath ? relPath + "/" + ent.name : ent.name
-                )}" target="_blank">Download</a>`
+                )}" target="_blank">Open</a>`
               : ""
           }
           ${enableDelete ? `<button data-action="delete" data-name="${escapeHtml(ent.name)}">Delete</button>` : ""}
@@ -764,47 +876,29 @@ async function initBrowser() {
       `;
       const link = tr.querySelector("a");
       link.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
-          exposeGlobals();
-          syncUploadHidden();
-          thumbQueue.abortAll(); // abort thumbnails on folder navigation
-          loadDir();
+          exposeGlobals(); syncUploadHidden(); thumbQueue.clearQueue(); loadDir();
         } else {
-          if (isMedia(ent.mime, ent.name)) {
-            openMediaPopup(ent);
-          } else {
-            openNonMediaPreview(ent.name);
-          }
+          if (isMedia(ent.mime, ent.name)) openMediaPopup(ent); else openNonMediaPreview(ent.name);
         }
       });
       tr.querySelectorAll("button[data-action]").forEach((btn) => {
-        btn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          handleAction(btn.dataset.action, ent.name, ent.is_dir);
-        });
+        btn.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); handleAction(btn.dataset.action, ent.name, ent.is_dir); });
       });
       tbody.appendChild(tr);
     });
     entriesDiv.innerHTML = "";
     entriesDiv.appendChild(table);
-    if (enableUpload) {
-      const us = document.getElementById("uploadSection");
-      if (us) us.style.display = "block";
-    }
+    if (enableUpload) { const us = document.getElementById("uploadSection"); if (us) us.style.display = "block"; }
   }
 
   function renderGrid(entries) {
     entriesDiv.innerHTML = "";
     entriesDiv.classList.remove("list-mode", "grid-mode");
     entriesDiv.classList.add("grid-mode");
-    if (!entries.length) {
-      entriesDiv.innerHTML = "<p>(Empty)</p>";
-      return;
-    }
+    if (!entries.length) { entriesDiv.innerHTML = "<p>(Empty)</p>"; return; }
     const frag = document.createDocumentFragment();
     entries.forEach((ent) => {
       const card = document.createElement("div");
@@ -814,7 +908,6 @@ async function initBrowser() {
       if (ent.is_dir) {
         mediaHTML = `<div class="thumb-glyph folder-glyph">📁</div>`;
       } else if (enableThumbs && isPreviewableImage(ent.mime, ent.name)) {
-        // mark low priority
         mediaHTML = `<img data-thumb="true" fetchpriority="low" alt="${escapeHtml(ent.name)}" loading="lazy" decoding="async" />`;
       } else if (enableThumbs && isPreviewableVideo(ent.mime, ent.name)) {
         mediaHTML = `<div class="thumb-glyph video-glyph">🎬</div>`;
@@ -827,20 +920,12 @@ async function initBrowser() {
         <div class="thumb-meta">${ent.is_dir ? "DIR" : formatSize(ent.size)}</div>
       `;
       card.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         if (ent.is_dir) {
           relPath = relPath ? `${relPath}/${ent.name}` : ent.name;
-          exposeGlobals();
-          syncUploadHidden();
-          thumbQueue.abortAll(); // abort thumbnails on folder navigation
-          loadDir();
+          exposeGlobals(); syncUploadHidden(); thumbQueue.clearQueue(); loadDir();
         } else {
-          if (isMedia(ent.mime, ent.name)) {
-            openMediaPopup(ent);
-          } else {
-            openNonMediaPreview(ent.name);
-          }
+          if (isMedia(ent.mime, ent.name)) openMediaPopup(ent); else openNonMediaPreview(ent.name);
         }
       });
       frag.appendChild(card);
@@ -848,62 +933,38 @@ async function initBrowser() {
       if (enableThumbs && !ent.is_dir && isPreviewableImage(ent.mime, ent.name)) {
         const imgEl = card.querySelector("img[data-thumb]");
         if (imgEl) {
-          // Assign deterministic sequence number in render order
           imgEl.dataset.seq = String(seqCounter++);
-          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(
-            path
-          )}&size=180`;
-          if (thumbObserver) {
-            imgEl.dataset.src = thumbURL;
-            thumbObserver.observe(imgEl);
-          } else {
-            thumbQueue.enqueue(imgEl, thumbURL);
-          }
+          const thumbURL = `/api/thumb?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}&size=180`;
+          if (thumbObserver) { imgEl.dataset.src = thumbURL; thumbObserver.observe(imgEl); }
+          else { thumbQueue.enqueue(imgEl, thumbURL, Number(imgEl.dataset.seq || 0)); }
         }
       }
     });
     entriesDiv.appendChild(frag);
-    if (enableUpload) {
-      const us = document.getElementById("uploadSection");
-      if (us) us.style.display = "block";
-    }
+    if (enableUpload) { const us = document.getElementById("uploadSection"); if (us) us.style.display = "block"; }
   }
 
-  // Actions
   async function handleAction(action, name, isDir) {
     if (action === "preview" && !isDir) {
       const entry = currentEntries.find((e) => e.name === name);
-      if (entry && isMedia(entry.mime, entry.name)) {
-        openMediaPopup(entry);
-        return;
-      }
-      openNonMediaPreview(name);
-      return;
+      if (entry && isMedia(entry.mime, entry.name)) { openMediaPopup(entry); return; }
+      openNonMediaPreview(name); return;
     }
 
     if (action === "delete") {
-      // Build the full relative path for deletion
       const targetRel = relPath ? `${relPath}/${name}` : name;
-
       const form = new FormData();
       form.append("drive_id", currentDrive);
       form.append("rel_path", targetRel);
-
       if (isDir) {
-        // Ask for explicit confirmation to delete entire folder tree
         if (!confirm(`Delete the folder "${name}" and all of its contents? This cannot be undone.`)) return;
         form.append("recursive", "1");
       } else {
         if (!confirm(`Delete ${name}?`)) return;
       }
-
       const r = await fetch("/api/delete", { method: "POST", body: form, credentials: "same-origin" });
-      if (r.ok) {
-        loadDir();
-      } else {
-        const msg = await r.text().catch(() => "");
-        alert(`Delete failed: ${r.status} ${msg}`);
-      }
+      if (r.ok) loadDir();
+      else { const msg = await r.text().catch(() => ""); alert(`Delete failed: ${r.status} ${msg}`); }
     }
   }
 
@@ -929,10 +990,7 @@ function initSearch() {
     try {
       const data = await fetchJSON(`/api/search?drive_id=${encodeURIComponent(drive)}&q=${encodeURIComponent(q)}`);
       const items = Array.isArray(data?.results) ? data.results : [];
-      if (!items.length) {
-        results.innerHTML = "<p>No results</p>";
-        return;
-      }
+      if (!items.length) { results.innerHTML = "<p>No results</p>"; return; }
       const ul = document.createElement("ul");
       items.forEach((it) => {
         const li = document.createElement("li");
