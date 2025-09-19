@@ -1,110 +1,147 @@
 # 📂 NAS (Network Accessed Storage)
 
-A **self-hosted web app** to securely browse your local or mounted drives.  
-Built with **FastAPI**, it provides a modern web interface with:
+A self‑hosted, password‑protected web app to browse, preview, and stream files from your local or mounted drives.
 
-- 🔑 Login protection  
-- 📂 File & folder browsing  
-- 🖼 Thumbnails & previews (images, videos, HEIC support)  
-- 🎥 Audio/video streaming with seek  
-- 🔍 File search  
+Backend: FastAPI • Frontend: Jinja + Vanilla JS
 
-Think of it as a **personal NAS browser** with a clean, responsive UI.  
+Highlights
+- 🔑 Login protection (signed sessions)
+- 📂 Drive browsing with safe path handling
+- 🖼 Thumbnails for images (and video posters)
+- 🎬 Streaming with range requests (seek)
+- 🔍 Search
+- 🧭 Clean, responsive UI with list/grid views
+- 🧩 Rich, in‑popup previews for many file types (see below)
 
 ---
 
-## ⚡ Quick Setup Guide (1 Minute)
+## ⚡ Quick Start
 
-### Step 1: Clone the repository
+1) Clone
 ```bash
-git clone https://github.com/your-repo/hdd_browser.git
-cd hdd_browser
+git clone https://github.com/Atharva0177/NAS.git
+cd NAS
 ```
 
-### Step 2: Create virtual environment & install dependencies
+2) Python env + dependencies
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
+# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r hdd_browser/requirements.txt
 ```
 
-### Step 3: Set minimum environment variables
-#### Linux / macOS
+3) Configure minimal env vars
+- Linux/macOS:
 ```bash
 export AUTH_USERNAME=admin
 export AUTH_PASSWORD=secret
-export SESSION_SECRET=my_super_secret_key
+export SESSION_SECRET=change_this_to_a_long_random_value
 ```
-
-#### Windows PowerShell
+- Windows PowerShell:
 ```powershell
 setx AUTH_USERNAME admin
 setx AUTH_PASSWORD secret
-setx SESSION_SECRET my_super_secret_key
+setx SESSION_SECRET change_this_to_a_long_random_value
 ```
 
-### Step 4: Run the app
+4) Run
 ```bash
 uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-### Step 5: Open in browser
+5) Open
 ```
 http://localhost:8080
 ```
 
 ---
 
-## ✨ Features
+## ✨ What’s New
 
-- 🔑 Secure login with signed cookies
-- 💽 Drive discovery (auto-detects mounts, restrictable with allow-list)
-- 📂 File browsing with safe path handling
-- 📝 Text preview for small files
-- 📥 File download with direct response
-- 🎥 Video/audio streaming with HTTP Range (seek supported)
-- 🖼 Thumbnails for images/videos (cached for speed)
-- 📸 HEIC support via pillow-heif (auto converts to JPEG)
-- 🔍 Search (recursive by name, depth & limit options)
-- 🎨 Responsive UI (lightbox/gallery, clean design)
+- In‑popup viewers (client‑only, no server plugins):
+  - DOCX → HTML via Mammoth.js
+  - XLSX/XLS/CSV → tables via SheetJS (XLSX)
+  - JSON/JSO/IPYNB → pretty‑printed JSON
+  - XML → pretty‑printed in code modal
+  - YAML/YML → parsed and re‑dumped with js‑yaml when available
+  - TXT/CPP/PY → raw code modal
+  - PDF → embedded inline
+- Video: MKV support added in the UI. Playback depends on browser codecs.
+- Robust multi‑CDN loader with optional local vendor fallback for viewer libraries.
 
 ---
 
-## 🚀 Full Installation Guide
+## 🧩 File Preview Matrix (Popup)
 
-### Requirements
-- Python 3.9+
-- `ffmpeg` installed (for video thumbnails)
-- Optional: `pillow-heif` for HEIC image support
+- Images: jpg, jpeg, png, webp, gif, bmp, heic/heif, avif, tiff
+- Videos: mp4, webm, mov, m4v, avi, mkv, ogv/ogg
+  - Note: MKV playback depends on the video/audio codecs your browser supports.
+- Documents:
+  - PDF: embedded inline
+  - DOCX: rendered to HTML (Mammoth.js)
+  - XLSX/XLS/CSV: rendered as tables (SheetJS)
+  - DOC/PPT/PPTX: not supported in‑browser; use Open/Download
+- Text/Code:
+  - json, jso, ipynb (pretty JSON), txt, cpp, py, xml (pretty), yaml/yml (pretty with js‑yaml)
 
-### Steps
+Large text previews are truncated to keep the UI fast:
+- Max ~1.5 MB raw text
+- CSV/TXT inline rendering capped to a safe number of lines
 
-#### 1. Clone and enter the repo
-```bash
-git clone https://github.com/Atharva0177/NAS.git
-cd NAS
-cd hdd_browser
+---
+
+## 📦 Optional: Offline / Air‑gapped Vendor Setup
+
+The app loads client‑viewer libraries from public CDNs by default. To self‑host them:
+
+1) Create a static vendor folder, for example:
+```
+hdd_browser/app/static/vendor/libs/
 ```
 
-#### 2. Create and activate virtual environment
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
+2) Download these files into that folder (names shown as expected by the loader if you customize it):
+- Mammoth: `mammoth.browser.min.js`
+- SheetJS: `xlsx.full.min.js`
+- js‑yaml (optional, YAML pretty‑print): `js-yaml.min.js`
+
+3) In your base template (before `app.js`), set your preferred base if you add a local loader:
+```html
+<script>window.PPTX_VENDOR_BASE = "/static/vendor/libs/";</script>
 ```
 
-#### 3. Install dependencies
-```bash
-pip install -r hdd_browser/requirements.txt
-```
+The loader will try your local files first, then CDNs (if configured that way).
 
-#### 4. Configure environment (via .env file or system variables)
-Example `.env` file:
+---
+
+## 🔧 Configuration
+
+You can use environment variables or a `.env` file (auto‑loaded by the app).
+
+Common variables:
+- `APP_NAME` – UI title
+- `HOST`, `PORT` – server bind
+- `DEBUG` – True/False
+- `AUTH_USERNAME`, `AUTH_PASSWORD` – login credentials
+- `SESSION_SECRET` – 16+ char secret for signed cookies
+- `ENABLE_UPLOAD` – True/False
+- `ENABLE_DELETE` – True/False
+- `ENABLE_THUMBNAILS` – True/False
+- `THUMB_CACHE_DIR` – path to thumbnail cache
+- `FFMPEG_PATH` – override ffmpeg path (video thumbs/posters)
+- `ENABLE_HEIC_CONVERSION` – True/False
+- `ALLOWED_ROOTS` – comma‑separated allowed root directories (limits browsing scope)
+
+Frontend toggles (set via page scripts or template globals):
+- `THUMB_MAX_CONC` – control thumbnail load concurrency (default 1 for strict serial)
+
+Example `.env`:
 ```env
-APP_NAME=HDD Browser
+APP_NAME=NAS
 DEBUG=True
 AUTH_USERNAME=admin
 AUTH_PASSWORD=secret
-SESSION_SECRET=my_super_secret_key
+SESSION_SECRET=change_me_long_random
 ENABLE_UPLOAD=True
 ENABLE_DELETE=False
 ENABLE_THUMBNAILS=True
@@ -112,103 +149,27 @@ THUMB_CACHE_DIR=.thumb_cache
 ALLOWED_ROOTS=/mnt/storage,/home
 ```
 
-#### 5. Run the app
-```bash
-uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080 --reload
-```
-
 ---
 
+## 🖥 Running in Production
 
-
-
-
-
-
-
-
-
-
-
-
-
----
-
-## 🔗 Tailscale Integration (Remote Access)
-
-Perfect for accessing your NAS from anywhere securely!
-
-### Benefits
-- **Zero-config VPN**: Access from anywhere without port forwarding
-- **End-to-end encryption**: All traffic encrypted between devices
-- **Cross-platform**: Works on mobile, desktop, and server
-- **Easy management**: Simple web interface for device control
-
-### Setup for Tailscale
-
-#### 1. Install Tailscale on your NAS server and get the Tailscale IP
+Uvicorn example:
 ```bash
-# Get your Tailscale IP
-tailscale ip -4
-```
-
-#### 2. Configure HDD Browser for Tailscale
-Update your `.env` file:
-```env
-DEBUG=False  # Disable debug for remote access
-SESSION_SECRET=your_very_long_secret_key_32chars_minimum
-AUTH_USERNAME=your_strong_username
-AUTH_PASSWORD=your_very_strong_password_123!
-```
-
-#### 3. Run on Tailscale interface
-```bash
-
 uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
 ```
 
-#### 4. Access from any device
-Install Tailscale on your phone/laptop and access:
-```
-# Replace 100.x.x.x with your actual Tailscale IP
-http://100.x.x.x:8080
-```
-
-### Optional: MagicDNS Setup
-Enable MagicDNS in Tailscale admin console to access via hostname:
-```
-http://your-nas-hostname:8080
-```
-
-### Security for Remote Access
-
-#### Recommended Security Settings
-```env
-# Strong authentication
-AUTH_USERNAME=your_strong_username
-AUTH_PASSWORD=your_very_strong_password_123!
-
-# Optional: Disable risky features for remote access
-ENABLE_DELETE=False  # Prevent accidental remote deletions
-ENABLE_UPLOAD=True   # Keep if you need remote uploads
-
-# Restrict access paths
-ALLOWED_ROOTS=/home/media,/mnt/nas  # Limit to specific dirs
-```
-
-### Systemd Service (Always-On NAS)
-Create `/etc/systemd/system/hdd-browser.service`:
+Systemd unit (example):
 ```ini
 [Unit]
-Description=HDD Browser NAS
-After=network.target tailscaled.service
+Description=NAS (FastAPI)
+After=network.target
 
 [Service]
 Type=simple
-User=your_user
-WorkingDirectory=/path/to/hdd_browser
-Environment=PATH=/path/to/hdd_browser/.venv/bin
-ExecStart=/path/to/hdd_browser/.venv/bin/uvicorn hdd_browser.app.main:app --host 100.x.x.x --port 8080
+User=YOUR_USER
+WorkingDirectory=/path/to/NAS
+Environment=PATH=/path/to/NAS/.venv/bin
+ExecStart=/path/to/NAS/.venv/bin/uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
 Restart=always
 RestartSec=5
 
@@ -216,182 +177,85 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Enable and start the service:
-```bash
-sudo systemctl enable hdd-browser
-sudo systemctl start hdd-browser
-sudo systemctl status hdd-browser  # Check status
+---
+
+## 🌐 Remote Access (Tailscale optional)
+
+Tailscale makes secure remote access trivial.
+
+- Install Tailscale on your NAS and device(s)
+- Use the Tailscale IP or MagicDNS hostname to access the service
+- Recommended for remote use:
+  - Strong `AUTH_*` and `SESSION_SECRET`
+  - Consider `ENABLE_DELETE=False`
+
+---
+
+## 🔒 Security
+
+- Only public paths (`/auth/login`, `/static/*`) are open; everything else requires a valid session.
+- Session cookies are signed (`itsdangerous`); provide a long `SESSION_SECRET`.
+- Path traversal is blocked via safe path joining.
+
+---
+
+## 📡 API (Authenticated)
+
+Key endpoints:
+- `GET /api/drives` – list drives
+- `GET /api/list?drive_id&rel_path` – list directory contents
+- `GET /api/preview?drive_id&rel_path` – light preview/metadata
+- `GET /api/download?drive_id&rel_path` – download a file
+- `GET /api/stream?drive_id&rel_path` – range‑enabled streaming (audio/video)
+- `GET /api/search?drive_id&q` – recursive search
+- `POST /api/upload` – upload file(s) (if enabled)
+- `POST /api/delete` – delete file/folder (if enabled; folder can be recursive)
+- `GET /api/thumb?drive_id&rel_path&size=...` – thumbnail
+- `GET /api/render_image?drive_id&rel_path&max_dim=...` – server‑sized image
+
+---
+
+## 🧠 Tips
+
+- Use `ALLOWED_ROOTS` to confine browsing to specific folders.
+- For HEIC images, ensure `pillow-heif` is installed (already in requirements).
+- Video thumbnails/posters need `ffmpeg` available in PATH (or set `FFMPEG_PATH`).
+- If you’re air‑gapped, self‑host the viewer libraries and set a local vendor base.
+
+---
+
+## 🧱 Project Structure (simplified)
+
+```
+NAS/
+├─ hdd_browser/
+│  ├─ app/
+│  │  ├─ main.py               # FastAPI app entry
+│  │  ├─ auth.py               # login/session
+│  │  ├─ config.py             # env & settings
+│  │  ├─ security.py           # public/private path rules
+│  │  ├─ drive_discovery.py    # drive/mount detection
+│  │  ├─ file_ops.py           # core file operations
+│  │  ├─ thumbnailer.py        # thumbs/posters
+│  │  ├─ heic_init.py          # HEIC support
+│  │  ├─ templates/            # Jinja2 templates
+│  │  └─ static/
+│  │     ├─ css/
+│  │     └─ js/app.js          # frontend (viewers & UI)
+│  └─ requirements.txt
+└─ README.md
 ```
 
 ---
 
+## ⚠️ Known Limitations
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## ⚙️ Configuration
-
-Settings can come from:
-- Environment variables
-- `.env` file (auto-discovered by `config.py`)
-
-### Key Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `APP_NAME` | App display name |
-| `HOST`, `PORT` | Where the server listens |
-| `DEBUG` | Enable/disable debug mode |
-| `AUTH_USERNAME`, `AUTH_PASSWORD` | Login credentials |
-| `SESSION_SECRET` | 16+ char secret for cookies |
-| `ENABLE_UPLOAD`, `ENABLE_DELETE` | Enable/disable file ops |
-| `ENABLE_THUMBNAILS` | Turn thumbnails on/off |
-| `THUMB_MAX_DIM` | Thumbnail size (pixels) |
-| `THUMB_CACHE_DIR` | Where cached thumbs live |
-| `FFMPEG_PATH` | Path to ffmpeg binary |
-| `ENABLE_HEIC_CONVERSION` | Enable HEIC→JPEG |
-| `ALLOWED_ROOTS` | Comma-separated root dirs |
+- PowerPoint formats (PPT/PPTX) are not supported in‑browser; use Open/Download.
+- MKV playback depends on your browser’s codec support.
+- Very large text/CSV files are truncated in preview for performance.
 
 ---
 
-## 🔒 Security & Auth
+## 📄 License
 
-- Only public paths (`/auth/login`, `/static/*`, etc.) are unauthenticated.
-- Everything else requires login.
-- Sessions are signed with `itsdangerous`.
-- File access uses safe path joining to block path traversal.
-
----
-
-## 💽 Drive Discovery & Browsing
-
-- Auto-detects drives and mount points.
-- Restricted by `ALLOWED_ROOTS` if set.
-- Directory listings are sanitized.
-
----
-
-## 📺 Previews & Streaming
-
-- **Text files**: show preview snippets in browser.
-- **File downloads**: served via `FileResponse`.
-- **Video/audio**: HTTP Range supported → fast seeking.
-
----
-
-## 🖼 Thumbnails & Images
-
-- Generated via Pillow (`.jpg`, `.png`, etc.)
-- Fixes orientation via EXIF
-- **HEIC support** → converted to JPEG if `pillow-heif` installed
-- **Videos** → thumbnails created with `ffmpeg`
-- All thumbnails cached to `.thumb_cache`
-
----
-
-## 🖥 User Interface
-
-Built with Jinja templates + vanilla JS.
-
-### Pages
-- `/` → Home
-- `/browse` → File browser
-- `/search` → Search
-- `/login` → Auth page
-
-### Static assets
-- CSS → `static/css/`
-- JS → `static/js/`
-
----
-
-## 📡 HTTP API (Authenticated)
-
-### Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/drives` | List drives |
-| `GET /api/list?drive_id&rel_path` | List folder contents |
-| `GET /api/preview?...` | Preview text/metadata |
-| `GET /api/download?...` | Download file |
-| `GET /api/stream?...` | Stream audio/video |
-| `GET /api/search?...` | Search files |
-| `POST /api/upload` | Upload file (if enabled) |
-| `POST /api/delete` | Delete file (if enabled) |
-| `GET /api/thumb?...` | Get thumbnail |
-| `GET /api/render_image?...` | Render/convert image |
-
-### Auth
-- `GET/POST /auth/login`
-- `POST /auth/logout`
-
-
-
-## 🛠 Troubleshooting
-
-### Login loop (401 error)
-- Check `SESSION_SECRET` length (must be 16+ chars)
-- Ensure cookies are enabled in your browser
-- Verify public path list in `security.py`
-
-### No thumbnails
-- Set `ENABLE_THUMBNAILS=True`
-- Install `ffmpeg`
-- Check `.thumb_cache` directory
-
-### HEIC images not loading
-- Install `pillow-heif`
-- Confirm `init_heic()` runs in `heic_init.py`
-
-### Permission denied
-- Verify OS file permissions
-- Restrict with `ALLOWED_ROOTS`
-
----
-
-## 📂 Project Structure
-
-```
-hdd_browser/
-├──hdd_browser/
-  ├── app/
-  │   ├── main.py           # App entrypoint
-  │   ├── config.py         # Config handling
-  │   ├── auth.py           # Auth & sessions
-  │   ├── security.py       # Public/private path rules
-  │   ├── drive_discovery.py# Drive detection
-  │   ├── file_ops.py       # File operations
-  │   ├── thumbnailer.py    # Thumbnails
-  │   ├── heic_init.py      # HEIC support
-  │   ├── templates/        # UI templates
-  │   └── static/           # CSS & JS
-  ├── requirements.txt
-
-```
-
----
-
-## 💡 Tips & Tricks
-
-- Mount network shares → then browse them via this app.
-- Use `ALLOWED_ROOTS` to limit to a specific folder (e.g., `/home/media`).
-- Run as a systemd service for 24/7 uptime.
-
----
-
+This project is licensed under the [MIT License](LICENSE).
