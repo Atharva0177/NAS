@@ -179,15 +179,127 @@ WantedBy=multi-user.target
 
 ---
 
-## 🌐 Remote Access (Tailscale optional)
+## 🌐 Remote Access with Tailscale (Windows, macOS, Linux)
 
-Tailscale makes secure remote access trivial.
+Tailscale gives you a private, encrypted network between your devices. You can access your NAS UI from anywhere without port‑forwarding.
 
-- Install Tailscale on your NAS and device(s)
-- Use the Tailscale IP or MagicDNS hostname to access the service
-- Recommended for remote use:
-  - Strong `AUTH_*` and `SESSION_SECRET`
-  - Consider `ENABLE_DELETE=False`
+### A. Install & Sign In
+
+- Download and install [Tailscale](https://tailscale.com/download) on your NAS and client devices.
+- Sign in with the same account on all devices.
+- On the NAS, verify it’s connected:
+```powershell
+# Windows PowerShell
+& "C:\Program Files\Tailscale\tailscale.exe" status
+& "C:\Program Files\Tailscale\tailscale.exe" ip -4
+```
+You should see a 100.x.x.x Tailscale IP (and a `.ts.net` MagicDNS name if enabled).
+
+### B. Run NAS and bind to all interfaces
+
+Start NAS:
+```bash
+uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
+```
+
+Optional (Windows Firewall): allow inbound on 8080 for local/LAN use
+```powershell
+New-NetFirewallRule -DisplayName "NAS 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+```
+
+### C. Access over Tailscale
+
+- From another device on your tailnet:
+  - With MagicDNS off: `http://<tailscale-ip>:8080`
+  - With MagicDNS on (Admin Console → DNS → MagicDNS): `http://<device-name>.tailnet-name.ts.net:8080`
+
+Tips
+- Set `DEBUG=False` for remote access.
+- Use strong `AUTH_USERNAME`, `AUTH_PASSWORD`, and a long `SESSION_SECRET`.
+
+---
+
+## 🌍 Public Internet Access via Tailscale Funnel (Windows)
+
+Tailscale Funnel can publish your local NAS to the public Internet under an HTTPS `.ts.net` domain, without router or DNS changes.
+
+Prerequisites
+- Tailscale v1.54+ on Windows (CLI installed at `C:\Program Files\Tailscale\tailscale.exe`)
+- Funnel feature enabled for your tailnet (Admin Console → Settings → Funnel)
+- MagicDNS and HTTPS certs enabled (Admin Console → DNS → check “MagicDNS”; and in the device’s Machine page, allow HTTPS certs if prompted)
+
+1) Start the NAS locally
+```powershell
+# In your NAS folder (PowerShell)
+.\.venv\Scripts\Activate.ps1
+uvicorn hdd_browser.app.main:app --host 127.0.0.1 --port 8080
+```
+
+2) Configure Tailscale Serve (reverse proxy) to your NAS
+Use the new Serve syntax (preferred on recent Tailscale versions):
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" serve https / http://127.0.0.1:8080
+```
+This sets up an HTTPS reverse proxy from the device’s `.ts.net` name to your local NAS.
+
+3) Turn on Funnel (expose to the public Internet)
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" funnel 443 on
+```
+
+4) Verify status and URL
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" serve status
+```
+You should see a public URL like:
+```
+https://<your-device>.<your-tailnet>.ts.net/
+```
+Open it from any browser on the Internet. Tailscale provisions a valid Let’s Encrypt certificate automatically.
+
+Notes
+- If `funnel` fails: ensure Funnel is enabled in the Admin Console and update to the latest Tailscale client. You may need admin rights in PowerShell.
+- Fullscreen or other advanced UI features are unrelated; Funnel only handles public routing and TLS.
+- To disable Funnel later:
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" funnel 443 off
+```
+- To remove the Serve mapping:
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" serve reset
+```
+
+Alternative (older syntax)
+Some older versions use set‑path:
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" serve --set-path / http://127.0.0.1:8080
+& "C:\Program Files\Tailscale\tailscale.exe" funnel on
+```
+
+Custom domain?
+- Funnel serves on your `.ts.net` name. For a custom domain, place a traditional reverse proxy (e.g., nginx/traefik) in front of your NAS or use a different tunneling provider that supports custom DNS on Windows.
+
+---
+
+## 🧰 Run NAS as a Windows Service (optional)
+
+Use [NSSM](https://nssm.cc/) (Non‑Sucking Service Manager) to run Uvicorn as a service:
+
+1) Install NSSM and open an elevated PowerShell
+2) Create the service:
+```powershell
+nssm install NAS
+# GUI:
+# Application: C:\Path\To\NAS\.venv\Scripts\uvicorn.exe
+# Arguments:   hdd_browser.app.main:app --host 127.0.0.1 --port 8080
+# Startup dir: C:\Path\To\NAS
+```
+3) Set environment variables in the NSSM “Environment” field or via System → Advanced → Environment Variables
+4) Start the service:
+```powershell
+nssm start NAS
+```
+Pair with Tailscale Serve + Funnel as above to publish it.
 
 ---
 
@@ -241,7 +353,7 @@ NAS/
 │  │  ├─ templates/            # Jinja2 templates
 │  │  └─ static/
 │  │     ├─ css/
-│  │     └─ js/app.js          # frontend (viewers & UI)
+│  │     └─ js/                # frontend (viewers & UI)
 │  └─ requirements.txt
 └─ README.md
 ```
