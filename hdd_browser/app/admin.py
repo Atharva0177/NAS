@@ -20,6 +20,9 @@ from .env_utils import (
     write_env_vars,
 )
 
+
+from .capacity import compute_capacity
+
 router = APIRouter(tags=["admin"])
 templates = Jinja2Templates(directory="hdd_browser/app/templates")
 
@@ -344,43 +347,38 @@ async def admin_stats(request: Request):
         if ok:
             reachable.append(p)
         else:
-            print(f"[admin] stats: skip {rs!r} -> {reason}")
             unreachable.append({"path": str(p), "reason": reason})
 
-    # Parallel scans
-    tasks = [
-        asyncio.to_thread(
-            _scan_root_quick,
-            p,
-            ADMIN_STATS_TIME_BUDGET_SEC,
-            ADMIN_STATS_MAX_ENTRIES_PER_ROOT,
-            ADMIN_STATS_BYTES,
-        )
-        for p in reachable
-    ]
-
+    # Quick per-root scans (existing behavior)
     roots_info: List[Dict] = []
     total_files = 0
     total_dirs = 0
     total_bytes = 0
     any_partial = False
 
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for p, res in zip(reachable, results):
-            if isinstance(res, Exception):
-                print(f"[admin] stats: error scanning {p}: {res}")
-                unreachable.append({"path": str(p), "reason": "scan_error"})
-                any_partial = True
-                continue
-            roots_info.append(res)
-            total_files += res["files"]
-            total_dirs += res["dirs"]
-            total_bytes += res["bytes"] if ADMIN_STATS_BYTES else 0
-            any_partial = any_partial or res.get("partial", False)
-            print(f"[admin] stats: scanned {p} -> files={res['files']} dirs={res['dirs']} bytes={res['bytes']} partial={res['partial']} in {res['elapsed_ms']}ms")
+    for p in reachable:
+        res = _scan_root_quick(p, ADMIN_STATS_TIME_BUDGET_SEC, ADMIN_STATS_MAX_ENTRIES_PER_ROOT, ADMIN_STATS_BYTES)
+        roots_info.append(res)
+        total_files += res["files"]
+        total_dirs += res["dirs"]
+        total_bytes += res["bytes"] if ADMIN_STATS_BYTES else 0
+        any_partial = any_partial or res.get("partial", False)
+        print(f"[admin] stats: scanned {p} -> files={res['files']} dirs={res['dirs']} bytes={res['bytes']} partial={res['partial']} in {res['elapsed_ms']}ms")
 
     drives = discover_drives()
+
+    # Compute capacity across ALL configured roots (not just reachable), without blocking on existence
+    try:
+        dedup_paths = [Path(r).expanduser() for r in dedup]
+        caps = compute_capacity(dedup_paths)
+        capacity_total_bytes = caps.get("capacity_total_bytes")
+        capacity_used_bytes = caps.get("capacity_used_bytes")
+        capacity_free_bytes = caps.get("capacity_free_bytes")
+        capacity_per_root = caps.get("capacity_per_root")  # NEW: per-root device breakdown
+    except Exception as e:
+        print(f"[admin] capacity compute failed: {e}")
+        capacity_total_bytes = capacity_used_bytes = capacity_free_bytes = None
+        capacity_per_root = []
 
     thumb_dir = Path(s.THUMB_CACHE_DIR)
     thumb_bytes = 0
@@ -402,7 +400,10 @@ async def admin_stats(request: Request):
             "roots_info": roots_info,
             "total_files": total_files,
             "total_dirs": total_dirs,
-            "total_bytes": total_bytes,
+            "total_bytes": total_bytes,  # retained for compatibility
+            "capacity_total_bytes": capacity_total_bytes,
+            "capacity_used_bytes": capacity_used_bytes,
+            "capacity_free_bytes": capacity_free_bytes,
             "thumb_cache_bytes": thumb_bytes,
             "uptime_sec": uptime_sec,
             "features": _current_features(),

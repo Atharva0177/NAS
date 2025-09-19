@@ -6,11 +6,18 @@
 {% endblock %}
 
 {% block content %}
+<div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-bottom:12px;">
+  <button id="refreshStatsBtn" class="btn-soft" type="button" title="Refresh admin stats">
+    Refresh Stats
+  </button>
+  <br />
+</div>
 <section class="admin-hero">
   <div class="hero-text">
     <h1 class="title">Admin Dashboard</h1>
     <p class="subtitle">Monitor system health, manage users, and inspect storage at a glance.</p>
     <div class="feature-badges" id="featureBadges">
+      
       <!-- badges set by JS -->
       <span class="badge pill muted">Loading features…</span>
     </div>
@@ -41,9 +48,9 @@
     <div class="stat-sub">indexed</div>
   </div>
   <div class="card glow stat">
-    <div class="card-title">Total Size</div>
-    <div class="stat-value" data-k="total_bytes">–</div>
-    <div class="stat-sub">bytes on disk</div>
+    <div class="card-title">Total Capacity</div>
+    <div class="stat-value" data-k="capacity_total_bytes">–</div>
+    <div class="stat-sub">across root devices</div>
   </div>
   <div class="card glow stat">
     <div class="card-title">Thumb Cache</div>
@@ -63,8 +70,8 @@
   </div>
   <div class="panel chart-panel">
     <div class="panel-header">
-      <h3>Roots by Size</h3>
-      <span class="muted">Top roots by total bytes</span>
+      <h3>Used by Root</h3>
+      <span class="muted">Used capacity per root device</span>
     </div>
     <canvas id="rootsSizeChart" height="220"></canvas>
   </div>
@@ -93,6 +100,8 @@
       <h3>Create User</h3>
       <span class="muted">Add a new user and assign roles</span>
     </div>
+    <br>
+    <br/>
     <form id="createUserForm" class="create-user-form">
       <div class="row">
         <label>Username
@@ -101,6 +110,7 @@
         <label>Password
           <input type="password" name="password" required />
         </label>
+        <br>
       </div>
       <div class="roles">
         <div class="roles-title">Roles</div>

@@ -83,6 +83,14 @@
         throw err;
       }
       return await r.json();
+    } catch (err) {
+      const msg = (err && err.message) ? err.message : String(err);
+      if ((err && err.name === "AbortError") || /AbortError|aborted|DOMException|timeout/i.test(msg)) {
+        const e = new Error(`timeout after ${timeoutMs}ms`);
+        e.code = "TIMEOUT";
+        throw e;
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -172,10 +180,21 @@
       rolesChart.update();
     }
 
-    // Roots by size bar
-    const roots = (dataStats.roots_info || []).slice().sort((a,b)=>b.bytes - a.bytes).slice(0,7);
-    const labels = roots.map(r => r.path.split(/[\\/]/).filter(Boolean).slice(-1)[0] || r.path);
-    const values = roots.map(r => r.bytes);
+    // Used capacity by root device bar (falls back to scan bytes if server not updated)
+    const cap = Array.isArray(dataStats.capacity_per_root) ? dataStats.capacity_per_root.slice() : [];
+    let labels, values;
+    if (cap.length) {
+      cap.sort((a, b) => (b.used_bytes || 0) - (a.used_bytes || 0));
+      labels = cap.map(r => {
+        const mp = (r.mountpoint || r.label || r.device || "").toString();
+        return mp.replace(/\\+$/g, "") || mp || "root";
+      });
+      values = cap.map(r => Number(r.used_bytes || 0));
+    } else {
+      const roots = (dataStats.roots_info || []).slice().sort((a,b)=>b.bytes - a.bytes).slice(0,7);
+      labels = roots.map(r => r.path.split(/[\\/]/).filter(Boolean).slice(-1)[0] || r.path);
+      values = roots.map(r => r.bytes);
+    }
 
     if (!rootsSizeChart) {
       rootsSizeChart = new Chart(document.getElementById("rootsSizeChart"), {
@@ -183,7 +202,7 @@
         data: {
           labels,
           datasets: [{
-            label: "Bytes",
+            label: cap.length ? "Used" : "Bytes",
             data: values,
             backgroundColor: colors.palette.map(c => c + "66"),
             borderColor: colors.palette,
@@ -204,6 +223,7 @@
     } else {
       rootsSizeChart.data.labels = labels;
       rootsSizeChart.data.datasets[0].data = values;
+      rootsSizeChart.data.datasets[0].label = cap.length ? "Used" : "Bytes";
       rootsSizeChart.update();
     }
 
@@ -265,7 +285,8 @@
     set("uptime", data.uptime_sec);
     set("total_files", data.total_files);
     set("total_dirs", data.total_dirs);
-    set("total_bytes", data.total_bytes);
+    // Using total capacity across devices (not scanned bytes)
+    set("capacity_total_bytes", data.capacity_total_bytes);
     set("thumb_cache_bytes", data.thumb_cache_bytes);
 
     const ul = document.getElementById("rootsList");
@@ -373,7 +394,6 @@
             }
             if (status) status.textContent = "Features updated.";
           } catch (err) {
-            // Revert on failure
             cbs.forEach(el => { const k = el.dataset.key; el.checked = !!prev[k]; });
             if (status) status.textContent = "Update failed.";
             alert("Failed to update features: " + (err && err.message ? err.message : String(err)));
@@ -467,7 +487,8 @@
 
   async function loadStats() {
     try {
-      const data = await fetchJSON("/api/admin/stats");
+      // Longer timeout to accommodate multiple roots
+      const data = await fetchJSON("/api/admin/stats", 60000);
       log("stats ok");
       applyStats(data);
       return data;
@@ -497,60 +518,11 @@
     }
   }
 
-  // Wire up Create User form or button
-  function wireCreateUser() {
-    const form = document.getElementById("createUserForm") || document.querySelector('form[data-role="create-user"]');
-    const btn = document.getElementById("createUserBtn");
-
-    async function handleCreate(e) {
-      if (e) e.preventDefault();
-      const scope = form || document.getElementById("createUser") || document.getElementById("userCreate") || document;
-
-      const usernameEl = scope.querySelector('input[name="username"]');
-      const passwordEl = scope.querySelector('input[name="password"]');
-      const roleChecks = scope.querySelectorAll('input[name="role"]:checked');
-
-      const username = usernameEl ? usernameEl.value.trim() : "";
-      const password = passwordEl ? passwordEl.value : "";
-      const roles = Array.from(roleChecks).map(i => i.value);
-
-      if (!username) {
-        alert("Please enter a username.");
-        if (usernameEl) usernameEl.focus();
-        return;
-      }
-
-      if (btn) btn.disabled = true;
-
-      const fd = new FormData();
-      fd.append("username", username);
-      fd.append("password", password);
-      fd.append("roles", roles.length ? roles.join(",") : "viewer");
-
-      try {
-        await postForm("/api/admin/users/create", fd);
-        if (usernameEl) usernameEl.value = "";
-        if (passwordEl) passwordEl.value = "";
-        scope.querySelectorAll('input[name="role"]').forEach(i => { i.checked = false; });
-        await loadUsers();
-      } catch (err) {
-        alert("Create failed: " + (err && err.message ? err.message : String(err)));
-      } finally {
-        if (btn) btn.disabled = false;
-      }
-    }
-
-    if (form) {
-      form.addEventListener("submit", handleCreate);
-    }
-    if (btn) {
-      btn.setAttribute("type", "button");
-      btn.addEventListener("click", handleCreate);
-    }
-  }
-
-  // Theme-aware recolor
-  function watchTheme() {
+  // Initialize admin page without polling; optional manual refresh support
+  async function init() {
+    log("init");
+    if (!document.getElementById("stats")) { log("not admin page (no #stats)"); return; }
+    // Theme/charts listeners
     const observer = new MutationObserver(() => {
       if (typeof Chart === "undefined") return;
       const colors = chartColors();
@@ -565,42 +537,39 @@
       });
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  }
 
-  async function refreshAll(chartsInitDone) {
-    log("refreshAll start");
-    const [stats, users] = await Promise.all([loadStats(), loadUsers()]);
-    if (typeof Chart !== "undefined") ensureCharts(users, stats);
-    if (!chartsInitDone.started) chartsInitDone.started = true;
-    log("refreshAll done");
-  }
-
-  function whenReady(fn, timeoutMs = 6000) {
-    const start = Date.now();
-    (function tick() {
-      if (document.readyState === "complete" || document.readyState === "interactive") {
-        try { fn(); } catch (e) { log("init error", e.message || e); }
-        return;
-      }
-      if (Date.now() - start > timeoutMs) {
-        log("init timeout waiting for DOM; running anyway");
-        try { fn(); } catch (e) { log("init error", e.message || e); }
-        return;
-      }
-      setTimeout(tick, 50);
-    })();
-  }
-
-  async function init() {
-    log("init");
-    if (!document.getElementById("stats")) { log("not admin page (no #stats)"); return; }
-    watchTheme();
-    wireCreateUser();
+    // Load once when page opens
     const flags = { started: false };
-    try { await refreshAll(flags); } catch {}
-    setInterval(() => refreshAll(flags).catch(()=>{}), 15000);
+    try {
+      const [stats, users] = await Promise.all([loadStats(), loadUsers()]);
+      if (typeof Chart !== "undefined") ensureCharts(users, stats);
+      flags.started = true;
+    } catch {}
+
+    // Optional: if you add a button with id="refreshStatsBtn", wire it to manual refresh
+    const refreshBtn = document.getElementById("refreshStatsBtn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.disabled = true;
+        try {
+          const stats = await loadStats();
+          const users = await fetchJSON("/api/admin/users");
+          if (typeof Chart !== "undefined") ensureCharts(users, stats);
+        } finally {
+          refreshBtn.disabled = false;
+        }
+      });
+    }
+
+    // No auto-refresh timer here — by design to reduce traffic.
     window.__adminLogs = LOGS; // expose for debugging
   }
 
-  whenReady(init);
+  (function whenReady() {
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+      init().catch(() => {});
+      return;
+    }
+    document.addEventListener("DOMContentLoaded", () => init().catch(() => {}), { once: true });
+  })();
 })();

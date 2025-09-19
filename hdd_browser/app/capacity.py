@@ -1,7 +1,6 @@
 import os
-import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 try:
     import psutil  # type: ignore
@@ -12,72 +11,111 @@ except Exception:  # pragma: no cover
 def _mountpoints() -> List[Tuple[str, str]]:
     """
     Return a list of (device, mountpoint) tuples.
+
+    Use all=True to include network-mapped and removable volumes (important on Windows).
     """
     if not psutil:
         raise RuntimeError("psutil is required for capacity reporting. pip install psutil")
-    entries = []
-    for p in psutil.disk_partitions(all=False):
-        # device may be '' on some platforms; normalize
+    entries: List[Tuple[str, str]] = []
+    try:
+        parts = psutil.disk_partitions(all=True)
+    except Exception:
+        parts = []
+    for p in parts:
         device = p.device or p.mountpoint
         entries.append((device, p.mountpoint))
     return entries
 
 
-def _device_for_path(path: Path) -> Tuple[str, str]:
+def _longest_mount_for_path_str(path_str: str) -> Optional[Tuple[str, str]]:
     """
-    Map a path to (device, mountpoint).
-    Chooses the longest mountpoint that is a parent of path.
+    Find the longest mountpoint that is a parent of path_str without touching the filesystem.
+    Returns (device, mountpoint) or None if no mountpoint matches.
     """
-    path = path.resolve()
-    matches = []
+    def norm(p: str) -> str:
+        return os.path.normcase(os.path.abspath(p.rstrip(os.sep) or os.sep))
+
+    target = norm(path_str)
+    best: Optional[Tuple[int, str, str]] = None
     for device, mp in _mountpoints():
         try:
-            mp_path = Path(mp).resolve()
+            mp_norm = norm(mp)
         except Exception:
             continue
-        if str(path).startswith(str(mp_path) + os.sep) or str(path) == str(mp_path):
-            matches.append((len(str(mp_path)), device, mp))
-    if not matches:
-        # Fallback: return the path root as mountpoint
-        root = Path(path.anchor or os.sep)
-        return (str(root), str(root))
-    _, device, mp = max(matches, key=lambda t: t[0])
-    return (device, mp)
+        if target == mp_norm or target.startswith(mp_norm + os.sep):
+            cand = (len(mp_norm), device, mp)
+            if best is None or cand[0] > best[0]:
+                best = cand
+    if not best:
+        return None
+    _, device, mp = best
+    return device, mp
 
 
-def compute_capacity(roots: List[Path]) -> Dict[str, int]:
+def compute_capacity(roots: List[Path]) -> Dict[str, object]:
     """
-    Compute aggregate capacity across unique devices that back the provided roots.
+    Compute aggregate capacity across unique devices backing the provided roots.
+    Returns totals and per-root device breakdown.
+
     Returns:
       {
-        "capacity_total_bytes": ...,
-        "capacity_used_bytes": ...,
-        "capacity_free_bytes": ...
+        "capacity_total_bytes": int,
+        "capacity_used_bytes": int,
+        "capacity_free_bytes": int,
+        "capacity_per_root": [
+          {
+            "device": str,
+            "mountpoint": str,
+            "total_bytes": int,
+            "used_bytes": int,
+            "free_bytes": int
+          }, ...
+        ]
       }
     """
     if not psutil:
         raise RuntimeError("psutil is required for capacity reporting. pip install psutil")
 
-    # Determine unique devices from roots
-    unique_devices = {}
+    # Map roots -> unique device mountpoints
+    unique_devices: Dict[str, str] = {}
     for r in roots:
-        if not r.exists():
+        try:
+            device_mount = _longest_mount_for_path_str(str(r.expanduser()))
+        except Exception:
+            device_mount = None
+        if not device_mount:
+            # No current mountpoint match (offline/unmounted) — skip
             continue
-        dev, mp = _device_for_path(r)
+        dev, mp = device_mount
         unique_devices[dev] = mp
 
     total = used = free = 0
+    per_root: List[Dict[str, int | str]] = []
+
     for dev, mp in unique_devices.items():
         try:
             usage = psutil.disk_usage(mp)
         except Exception:
+            # Skip devices we cannot stat (e.g., no media)
             continue
-        total += int(usage.total)
-        used += int(usage.used)
-        free += int(usage.free)
+        entry = {
+            "device": str(dev),
+            "mountpoint": str(mp),
+            "total_bytes": int(usage.total),
+            "used_bytes": int(usage.used),
+            "free_bytes": int(usage.free),
+        }
+        per_root.append(entry)
+        total += entry["total_bytes"]  # type: ignore[arg-type]
+        used += entry["used_bytes"]    # type: ignore[arg-type]
+        free += entry["free_bytes"]    # type: ignore[arg-type]
+
+    # Sort for convenience (largest used first)
+    per_root.sort(key=lambda e: int(e["used_bytes"]), reverse=True)
 
     return {
         "capacity_total_bytes": total,
         "capacity_used_bytes": used,
         "capacity_free_bytes": free,
+        "capacity_per_root": per_root,
     }
