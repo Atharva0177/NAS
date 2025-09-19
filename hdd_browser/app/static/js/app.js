@@ -38,6 +38,221 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // =============================
+// Multi-CDN loader + optional local vendor fallback
+// =============================
+
+function vendorUrl(path) {
+  const base = (typeof window.PPTX_VENDOR_BASE === "string" && window.PPTX_VENDOR_BASE) || "";
+  return base ? (base.replace(/\/+$/, "") + "/" + String(path || "").replace(/^\/+/, "")) : null;
+}
+
+async function loadScriptFromAny(urls, testFn, { optional = false } = {}) {
+  let lastErr = null;
+  for (const url of urls) {
+    if (!url) continue;
+    try {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = url;
+        s.async = true;
+        s.crossOrigin = "anonymous";
+        s.referrerPolicy = "no-referrer";
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error("Failed to load " + url));
+        document.head.appendChild(s);
+      });
+      if (typeof testFn !== "function" || testFn()) return true;
+      lastErr = new Error("Loaded " + url + " but testFn failed");
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (optional) return false;
+  throw lastErr || new Error("Failed to load any script from list");
+}
+
+function loadCssFromAny(urls) {
+  for (const url of urls) {
+    if (!url) continue;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = url;
+    link.crossOrigin = "anonymous";
+    link.referrerPolicy = "no-referrer";
+    document.head.appendChild(link);
+    return;
+  }
+}
+
+// External libs (client-only viewers)
+async function ensureMammoth() {
+  if (window.mammoth) return window.mammoth;
+  await loadScriptFromAny(
+    [
+      "https://unpkg.com/mammoth@1.7.1/mammoth.browser.min.js",
+      "https://cdn.jsdelivr.net/npm/mammoth@1.7.1/mammoth.browser.min.js",
+      vendorUrl("mammoth.browser.min.js"),
+    ],
+    () => !!window.mammoth
+  );
+  return window.mammoth;
+}
+
+async function ensureXLSX() {
+  if (window.XLSX) return window.XLSX;
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+      "https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+      vendorUrl("xlsx.full.min.js"),
+    ],
+    () => !!window.XLSX
+  );
+  return window.XLSX;
+}
+
+// Experimental PPTX viewer (pptxjs + deps) with fallbacks
+let __pptxDepsLoaded = false;
+async function ensurePPTXViewer() {
+  if (__pptxDepsLoaded && window.$?.fn?.pptxToHtml) return window.$;
+
+  // CSS
+  loadCssFromAny([
+    "https://cdn.jsdelivr.net/npm/pptxjs/dist/pptxjs.css",
+    "https://unpkg.com/pptxjs/dist/pptxjs.css",
+    vendorUrl("pptxjs.css"),
+  ]);
+  loadCssFromAny([
+    "https://cdn.jsdelivr.net/npm/pptxjs/dist/nv.d3.min.css",
+    "https://unpkg.com/pptxjs/dist/nv.d3.min.css",
+    "https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.8.6/nv.d3.min.css",
+    vendorUrl("nv.d3.min.css"),
+  ]);
+
+  // JS deps (order matters)
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/jquery@3.6.4/dist/jquery.min.js",
+      "https://unpkg.com/jquery@3.6.4/dist/jquery.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.4/jquery.min.js",
+      vendorUrl("jquery.min.js"),
+    ],
+    () => !!window.jQuery || !!window.$
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+      "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+      vendorUrl("jszip.min.js"),
+    ],
+    () => !!window.JSZip
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/jszip-utils@0.1.0/dist/jszip-utils.min.js",
+      "https://unpkg.com/jszip-utils@0.1.0/dist/jszip-utils.min.js",
+      vendorUrl("jszip-utils.min.js"),
+    ],
+    () => !!window.JSZipUtils
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/d3@3.5.17/d3.min.js",
+      "https://unpkg.com/d3@3.5.17/d3.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.17/d3.min.js",
+      vendorUrl("d3.v3.min.js"),
+    ],
+    () => !!window.d3 && /^3\./.test(window.d3.version || "")
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/nvd3@1.8.6/build/nv.d3.min.js",
+      "https://unpkg.com/nvd3@1.8.6/build/nv.d3.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.8.6/nv.d3.min.js",
+      vendorUrl("nv.d3.min.js"),
+    ],
+    () => !!window.nv
+  );
+
+  // screenfull is optional (fullscreen support)
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/screenfull@6.2.2/dist/screenfull.min.js",
+      "https://unpkg.com/screenfull@6.2.2/dist/screenfull.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/screenfull.js/6.2.2/screenfull.min.js",
+      vendorUrl("screenfull.min.js"),
+    ],
+    () => !!window.screenfull,
+    { optional: true }
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/pptxjs/dist/pptxjs.min.js",
+      "https://unpkg.com/pptxjs/dist/pptxjs.min.js",
+      vendorUrl("pptxjs.min.js"),
+    ],
+    () => !!window.$
+  );
+
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/pptxjs/dist/divs2slides.min.js",
+      "https://unpkg.com/pptxjs/dist/divs2slides.min.js",
+      vendorUrl("divs2slides.min.js"),
+    ],
+    () => !!window.$?.fn?.pptxToHtml
+  );
+
+  __pptxDepsLoaded = true;
+  return window.$;
+}
+
+// js-yaml (optional) for YAML pretty printing
+async function ensureJSYAML() {
+  if (window.jsyaml) return window.jsyaml;
+  await loadScriptFromAny(
+    [
+      "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js",
+      "https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js",
+      vendorUrl("js-yaml.min.js"),
+    ],
+    () => !!window.jsyaml
+  ).catch(() => {});
+  return window.jsyaml || null;
+}
+
+// =============================
+// Pretty printers
+// =============================
+function prettyXml(xml) {
+  try {
+    const compact = String(xml).replace(/>\s+</g, "><").trim();
+    const tokens = compact.replace(/</g, "\n<").split("\n").filter(Boolean);
+    let indent = 0;
+    return tokens
+      .map((lineRaw) => {
+        const line = lineRaw.trim();
+        if (/^<\/.+?>/.test(line)) indent = Math.max(0, indent - 1);
+        const pad = "  ".repeat(indent);
+        const out = pad + line;
+        if (/^<[^!?\/][^>]*[^\/]>$/.test(line)) indent++;
+        return out;
+      })
+      .join("\n");
+  } catch {
+    return xml;
+  }
+}
+
+// =============================
 // Thumbnail queue with deterministic order (no blob:, serial by default)
 // =============================
 
@@ -144,13 +359,17 @@ function isPreviewableImage(mime, name) {
     (mime && mime.startsWith("image/"))
   );
 }
+
+// NOTE: includes MKV support; browser playback depends on codecs. If not supported,
+// the <video> element will show an error; users can still Open/Download.
 function isPreviewableVideo(mime, name) {
   const ext = (name || "").toLowerCase().split(".").pop();
   return (
-    ["mp4", "webm", "mov", "m4v", "avi", "mkv", "ogg"].includes(ext) ||
+    ["mp4", "webm", "mov", "m4v", "avi", "mkv", "ogv", "ogg"].includes(ext) ||
     (mime && mime.startsWith("video/"))
   );
 }
+
 function isMedia(mime, name) {
   return isPreviewableImage(mime, name) || isPreviewableVideo(mime, name);
 }
@@ -251,14 +470,12 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
     }
   }
 
-  // Close button and backdrop click (clicking outside box only)
   closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
   backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
 
   if (prevBtn && onPrev) prevBtn.addEventListener("click", (e) => { e.stopPropagation(); onPrev(); });
   if (nextBtn && onNext) nextBtn.addEventListener("click", (e) => { e.stopPropagation(); onNext(); });
 
-  // ESC to close
   const onKey = (e) => {
     if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
@@ -273,7 +490,7 @@ function createMediaModal({ title, type, src, downloadHref, poster, onPrev, onNe
 }
 
 // =============================
-// Text / Code Modal (json/jso, py, ipynb, csv, txt, cpp)
+// Text / Code Modal (json/jso, py, ipynb, txt, cpp, xml, yaml/yml)
 // =============================
 function createTextModal({ title, text, downloadHref, truncated }) {
   const backdrop = document.createElement("div");
@@ -327,17 +544,18 @@ function createTextModal({ title, text, downloadHref, truncated }) {
 
 function shouldOpenTextModal(name, mime) {
   const ext = (name || "").toLowerCase().split(".").pop();
-  // Modalize these as text/code
-  const modalExts = new Set(["jso", "json", "py", "ipynb", "csv", "txt", "cpp"]);
+  // CSV is handled by spreadsheet viewer; everything below goes to code modal
+  const modalExts = new Set(["jso", "json", "py", "ipynb", "txt", "cpp", "xml", "yaml", "yml"]);
   if (modalExts.has(ext)) return true;
-  if (mime && (mime.startsWith("text/") || mime.includes("json"))) return true;
+  if (mime && (mime.startsWith("text/") || mime.includes("json") || mime.includes("xml") || mime.includes("yaml"))) {
+    return true;
+  }
   return false;
 }
 
-// Fallback: fetch file text when /api/preview has no text (e.g., ipynb/csv)
+// Fallback: fetch file text when /api/preview has no text (e.g., ipynb)
 async function fetchTextPreview(downloadHref, ext) {
   const MAX_BYTES = 1_500_000; // ~1.5MB
-  const MAX_LINES = 2000;      // cap lines for CSV/TXT
   try {
     const r = await fetch(downloadHref, { credentials: "same-origin" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -353,12 +571,6 @@ async function fetchTextPreview(downloadHref, ext) {
     const lowerExt = (ext || "").toLowerCase();
     if (["ipynb", "json", "jso"].includes(lowerExt)) {
       try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
-    } else if (["csv", "txt"].includes(lowerExt)) {
-      const lines = text.split(/\r?\n/);
-      if (lines.length > MAX_LINES) {
-        text = lines.slice(0, MAX_LINES).join("\n");
-        truncated = true;
-      }
     }
     return { text, truncated };
   } catch {
@@ -367,29 +579,15 @@ async function fetchTextPreview(downloadHref, ext) {
 }
 
 // =============================
-// Document Modal (PDF embed; Office via Office Online Viewer)
+// Rich HTML Modal (for DOCX/XLSX/CSV render results)
 // =============================
-function createDocModal({ title, pdfObjectUrl, officeEmbedUrl, downloadHref, mime, note }) {
+function createHtmlModal({ title, html, downloadHref, note }) {
   const backdrop = document.createElement("div");
   backdrop.className = "media-modal-backdrop";
   backdrop.style.zIndex = String(++_mediaModalZ);
 
   const box = document.createElement("div");
   box.className = "media-modal-box";
-  const bodyInner = (() => {
-    if (pdfObjectUrl) {
-      return `<iframe class="doc-frame" title="Document" style="width:100%;height:70vh;border:0;background:#fff;" src="${pdfObjectUrl}"></iframe>`;
-    }
-    if (officeEmbedUrl) {
-      return `<iframe class="doc-frame" title="Document" style="width:100%;height:70vh;border:0;background:#fff;" src="${officeEmbedUrl}"></iframe>
-              <div class="muted small" style="margin-top:6px;">If the viewer doesn't load, the file may not be publicly reachable by Office Online. Use Open or Download.</div>`;
-    }
-    return `
-      <div class="muted" style="margin:8px 0 12px;">
-        ${escapeHtml(note || "Preview not supported in-browser. Use Open or Download.")}
-      </div>`;
-  })();
-
   box.innerHTML = `
     <div class="media-modal-header">
       <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
@@ -399,8 +597,9 @@ function createDocModal({ title, pdfObjectUrl, officeEmbedUrl, downloadHref, mim
         <button class="media-modal-btn media-modal-close" aria-label="Close">✕</button>
       </div>
     </div>
-    <div class="media-modal-body" style="display:block;">
-      ${bodyInner}
+    <div class="media-modal-body" style="display:block; max-height: 70vh; overflow: auto; background: #fff; color: #000;">
+      ${note ? `<div class="muted small" style="margin:8px 0 12px;">${escapeHtml(note)}</div>` : ""}
+      <div class="doc-html">${html || ""}</div>
     </div>
   `;
 
@@ -408,14 +607,10 @@ function createDocModal({ title, pdfObjectUrl, officeEmbedUrl, downloadHref, mim
   document.body.appendChild(backdrop);
 
   const closeBtn = box.querySelector(".media-modal-close");
-  function cleanup() {
-    try { if (pdfObjectUrl && pdfObjectUrl.startsWith("blob:")) URL.revokeObjectURL(pdfObjectUrl); } catch {}
-    backdrop.remove();
-  }
+  function cleanup() { backdrop.remove(); }
   closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
   backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
 
-  // ESC to close
   const onKey = (e) => {
     if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
@@ -428,13 +623,192 @@ function createDocModal({ title, pdfObjectUrl, officeEmbedUrl, downloadHref, mim
   return { close: cleanup };
 }
 
-function shouldOpenDocModal(name, mime) {
-  const ext = (name || "").toLowerCase().split(".").pop();
-  // Docs we show in a doc modal: PDF, Office formats
-  const docExts = new Set(["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"]);
-  if (docExts.has(ext)) return true;
-  if (mime && (mime === "application/pdf" || mime.startsWith("application/vnd.openxmlformats"))) return true;
-  return false;
+// =============================
+// PDF Modal (embed URL directly)
+// =============================
+function createPdfModal({ title, src, downloadHref, note }) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "media-modal-backdrop";
+  backdrop.style.zIndex = String(++_mediaModalZ);
+
+  const box = document.createElement("div");
+  box.className = "media-modal-box";
+  box.innerHTML = `
+    <div class="media-modal-header">
+      <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
+      <div class="media-modal-actions">
+        ${downloadHref ? `<a class="media-modal-btn media-modal-download" href="${downloadHref}" target="_blank">Open</a>` : ""}
+        ${downloadHref ? `<a class="media-modal-btn" href="${downloadHref}" download>Download</a>` : ""}
+        <button class="media-modal-btn media-modal-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="media-modal-body" style="display:block;">
+      <iframe class="doc-frame" title="PDF" style="width:100%;height:70vh;border:0;background:#fff;" src="${src}"></iframe>
+      ${note ? `<div class="muted small" style="margin-top:6px;">${escapeHtml(note)}</div>` : ""}
+    </div>
+  `;
+
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  const closeBtn = box.querySelector(".media-modal-close");
+  function cleanup() { backdrop.remove(); }
+  closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
+
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      cleanup();
+      window.removeEventListener("keydown", onKey, true);
+    }
+  };
+  window.addEventListener("keydown", onKey, true);
+
+  return { close: cleanup };
+}
+
+// =============================
+// Client-side viewers (DOCX / XLSX / CSV / PPTX)
+// =============================
+async function openDocxInModal({ title, downloadHref }) {
+  try {
+    const r = await fetch(downloadHref, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const buf = await r.arrayBuffer();
+    const mammoth = await ensureMammoth();
+    const res = await mammoth.convertToHtml({ arrayBuffer: buf }, {
+      styleMap: ["u => u", "strike => s"]
+    });
+    const html = `
+      <style>
+        .doc-html { padding: 12px 16px; }
+        .doc-html h1,h2,h3 { margin: .6em 0 .4em; }
+        .doc-html p { margin: .4em 0; }
+        .doc-html table { border-collapse: collapse; width: 100%; }
+        .doc-html th, .doc-html td { border: 1px solid #ddd; padding: 6px 8px; }
+      </style>
+      ${res.value}
+    `;
+    createHtmlModal({ title, html, downloadHref, note: "Rendered locally from DOCX (client-side)." });
+  } catch (e) {
+    alert("DOCX preview failed: " + (e?.message || e));
+  }
+}
+
+async function openSpreadsheetInModal({ title, downloadHref, ext }) {
+  try {
+    const r = await fetch(downloadHref, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const buf = await r.arrayBuffer();
+    const XLSX = await ensureXLSX();
+    const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+
+    let htmlParts = [
+      `<style>
+        .sheet-wrap { padding: 8px 12px; }
+        .sheet-wrap h3 { margin: 10px 0 6px; }
+        table { border-collapse: collapse; width: 100%; background: #fff; color: #000; }
+        th, td { border: 1px solid #ddd; padding: 4px 6px; font-size: 13px; }
+        thead th { background: #f0f0f0; }
+      </style>`
+    ];
+
+    const sheetNames = wb.SheetNames || [];
+    if (!sheetNames.length) throw new Error("No sheets found");
+
+    sheetNames.forEach((name, idx) => {
+      const ws = wb.Sheets[name];
+      const html = XLSX.utils.sheet_to_html(ws, { header: "", footer: "" });
+      htmlParts.push(`<div class="sheet-wrap"><h3>Sheet ${idx + 1}: ${escapeHtml(name)}</h3>${html}</div>`);
+    });
+
+    const note = ext === "csv"
+      ? "Rendered locally from CSV (client-side)."
+      : "Rendered locally from XLSX (client-side).";
+    createHtmlModal({ title, html: htmlParts.join(""), downloadHref, note });
+  } catch (e) {
+    alert("Spreadsheet preview failed: " + (e?.message || e));
+  }
+}
+
+let _pptxModalCounter = 1;
+function createPptxModal({ title, downloadHref }) {
+  const id = `pptx-container-${_pptxModalCounter++}`;
+  const backdrop = document.createElement("div");
+  backdrop.className = "media-modal-backdrop";
+  backdrop.style.zIndex = String(++_mediaModalZ);
+
+  const box = document.createElement("div");
+  box.className = "media-modal-box";
+  box.innerHTML = `
+    <div class="media-modal-header">
+      <span class="media-modal-title" title="${escapeHtml(title || "")}">${escapeHtml(title || "")}</span>
+      <div class="media-modal-actions">
+        ${downloadHref ? `<a class="media-modal-btn media-modal-download" href="${downloadHref}" target="_blank">Open</a>` : ""}
+        ${downloadHref ? `<a class="media-modal-btn" href="${downloadHref}" download>Download</a>` : ""}
+        <button class="media-modal-btn media-modal-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="media-modal-body" style="display:block; background:#111; color:#fff; max-height: 75vh;">
+      <div id="${id}" class="pptx-viewer-wrap" style="height:72vh; overflow:auto; background:#222;"></div>
+      <div class="muted small" style="margin-top:6px; color:#bbb;">
+        Experimental PPTX viewer (client-side). Some decks may not render perfectly.
+      </div>
+    </div>
+  `;
+  backdrop.appendChild(box);
+  document.body.appendChild(backdrop);
+
+  const closeBtn = box.querySelector(".media-modal-close");
+  function cleanup() { backdrop.remove(); }
+  closeBtn?.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); cleanup(); });
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) { e.preventDefault(); e.stopPropagation(); cleanup(); } });
+
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      cleanup();
+      window.removeEventListener("keydown", onKey, true);
+    }
+  };
+  window.addEventListener("keydown", onKey, true);
+
+  return { containerSelector: `#${id}`, close: cleanup };
+}
+
+async function openPptxInModal({ title, downloadHref }) {
+  try {
+    const $ = await ensurePPTXViewer();
+    const modal = createPptxModal({ title, downloadHref });
+    const fileUrl = absoluteHref(downloadHref);
+
+    $(modal.containerSelector).pptxToHtml({
+      pptxFile: fileUrl,
+      slidesScale: "auto",
+      slideMode: true,
+      slideModeConfig: {
+        nav: true,
+        navTxtColor: "#fff",
+        showSlideNum: true,
+        showTotalSlideNum: true,
+        keyNavigation: true,
+        mouseWheelNavigation: true,
+        progress: true,
+        fit: "contain",
+        background: "#111",
+        autoSlide: 0,
+        // Disable fullscreen if screenfull is missing
+        fullScreen: !!window.screenfull
+      }
+    });
+  } catch (e) {
+    createHtmlModal({
+      title,
+      html: `<div class="muted">PPTX experimental viewer failed: ${escapeHtml(e?.message || String(e))}. Use Open/Download.</div>`,
+      downloadHref
+    });
+  }
 }
 
 // =============================
@@ -545,6 +919,7 @@ async function initBrowser() {
     });
   }
 
+  // Upload wiring
   (function wireUpload() {
     const uploadSection = document.getElementById("uploadSection");
     if (uploadSection && enableUpload) uploadSection.style.display = "block";
@@ -615,6 +990,7 @@ async function initBrowser() {
     folderInput?.addEventListener("change", async () => { await uploadFiles(folderInput.files); if (folderInput) folderInput.value = ""; });
   })();
 
+  // Sorting helpers
   function entryTypeRank(ent) {
     if (ent.is_dir) return 0;
     if (isPreviewableImage(ent.mime, ent.name)) return 1;
@@ -748,7 +1124,7 @@ async function initBrowser() {
     }
   }
 
-  // Non-media preview routing (text/code modal, or doc modal)
+  // Non-media preview routing
   function openNonMediaPreview(name) {
     const path = relPath ? `${relPath}/${name}` : name;
     const url = `/api/preview?drive_id=${encodeURIComponent(currentDrive)}&rel_path=${encodeURIComponent(path)}`;
@@ -762,53 +1138,66 @@ async function initBrowser() {
         const mime = data?.mime || "";
         const ext = (title || "").toLowerCase().split(".").pop();
 
+        // Textual/code formats (.json/.jso, .py, .ipynb, .txt, .cpp, .xml, .yaml/.yml)
         if (shouldOpenTextModal(title, mime)) {
           let text = data?.text || "";
           let truncated = !!data?.truncated;
+
           if (!text) {
             const t = await fetchTextPreview(downloadHref, ext);
             if (t) { text = t.text; truncated = truncated || t.truncated; }
-          } else {
-            if (["json", "jso", "ipynb"].includes(ext)) {
-              try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
-            } else if (ext === "csv") {
-              const lines = text.split(/\r?\n/);
-              if (lines.length > 2000) { text = lines.slice(0, 2000).join("\n"); truncated = true; }
-            }
           }
+
+          const lowerExt = (ext || "").toLowerCase();
+          if (["json", "jso", "ipynb"].includes(lowerExt)) {
+            try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+          } else if (lowerExt === "xml") {
+            try { text = prettyXml(text); } catch {}
+          } else if (lowerExt === "yaml" || lowerExt === "yml") {
+            try {
+              const jsyaml = await ensureJSYAML().catch(() => null);
+              if (jsyaml) {
+                const obj = jsyaml.load(text);
+                text = jsyaml.dump(obj, { lineWidth: 100, noRefs: true });
+              }
+            } catch {}
+          }
+
           createTextModal({ title, text, downloadHref, truncated });
           return;
         }
 
-        if (shouldOpenDocModal(title, mime)) {
-          const abs = absoluteHref(downloadHref);
-          const isPdf = mime === "application/pdf" || ext === "pdf";
-          if (isPdf) {
-            // Embed PDF via blob for best compatibility
-            let pdfUrl = "";
-            try {
-              const r = await fetch(downloadHref, { credentials: "same-origin" });
-              if (!r.ok) throw new Error(`HTTP ${r.status}`);
-              const blob = await r.blob();
-              pdfUrl = URL.createObjectURL(blob);
-            } catch {}
-            createDocModal({ title, pdfObjectUrl: pdfUrl, officeEmbedUrl: "", downloadHref, mime: "application/pdf" });
-          } else {
-            // Office viewer embed (file must be publicly reachable by officeapps.live.com)
-            const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(abs)}`;
-            createDocModal({
-              title,
-              pdfObjectUrl: "",
-              officeEmbedUrl: officeUrl,
-              downloadHref,
-              mime,
-              note: "Preview not supported in-browser. Use Open or Download."
-            });
-          }
+        // Client-only viewers
+        if (ext === "docx") {
+          await openDocxInModal({ title, downloadHref });
+          return;
+        }
+        if (ext === "xlsx" || ext === "xls" || ext === "csv") {
+          await openSpreadsheetInModal({ title, downloadHref, ext });
+          return;
+        }
+        if (ext === "pptx") {
+          await openPptxInModal({ title, downloadHref });
           return;
         }
 
-        // Fallback to bottom inline preview
+        // PDF in iframe
+        if (ext === "pdf" || mime === "application/pdf") {
+          createPdfModal({ title, src: downloadHref, downloadHref });
+          return;
+        }
+
+        // Legacy DOC/PPT are not reliably supported client-side
+        if (ext === "doc" || ext === "ppt") {
+          createHtmlModal({
+            title,
+            html: `<div class="muted">Preview for ${escapeHtml(ext.toUpperCase())} is not available in-browser without a converter. Use Open/Download.</div>`,
+            downloadHref
+          });
+          return;
+        }
+
+        // Fallback to inline preview block
         renderInlinePreview(data);
       })
       .catch((e) => {
@@ -824,18 +1213,24 @@ async function initBrowser() {
       previewDiv.innerHTML = "<p>No preview.</p>";
       return;
     }
-    const lowerName = data.name.toLowerCase();
-    if (
-      (data.mime && (data.mime.startsWith("text/") || data.mime === "application/json")) ||
-      (!data.mime && lowerName.match(/\.(txt|json|log|md|csv)$/))
-    ) {
+    const lowerName = (data.name || "").toLowerCase();
+    const isTextLike =
+      (data.mime && (data.mime.startsWith("text/") || ["application/json", "application/xml", "text/xml"].includes(data.mime))) ||
+      (!data.mime && lowerName.match(/\.(txt|json|log|md|csv|xml|yaml|yml)$/));
+
+    if (isTextLike) {
       let body = data.text || "";
       if (lowerName.endsWith(".json") || lowerName.endsWith(".ipynb") || lowerName.endsWith(".jso")) {
         try { body = JSON.stringify(JSON.parse(body), null, 2); } catch {}
-      }
-      if (lowerName.endsWith(".csv")) {
-        const lines = body.split(/\r?\n/);
-        if (lines.length > 2000) body = lines.slice(0, 2000).join("\n") + "\n[TRUNCATED]";
+      } else if (lowerName.endsWith(".xml")) {
+        try { body = prettyXml(body); } catch {}
+      } else if (lowerName.endsWith(".yaml") || lowerName.endsWith(".yml")) {
+        try {
+          if (window.jsyaml) {
+            const obj = window.jsyaml.load(body);
+            body = window.jsyaml.dump(obj, { lineWidth: 100, noRefs: true });
+          }
+        } catch {}
       }
       previewDiv.innerHTML = `<h3>Preview: ${escapeHtml(
         data.name
