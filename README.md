@@ -1,4 +1,4 @@
-# 📂 NAS (Network Accessed Storage)
+# 📂 NAS (Network Attached Storage)
 
 A self‑hosted, password‑protected web app to browse, preview, and stream files from your local or mounted drives.
 
