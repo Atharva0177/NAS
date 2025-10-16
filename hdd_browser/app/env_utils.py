@@ -46,16 +46,23 @@ def read_env_file_var_only(key: str) -> Optional[str]:
     """
     Read a key strictly from the .env file (ignore process environment).
     This is used where we want the freshest on-disk state (e.g. admin panel).
+
+    Note: We intentionally avoid python-dotenv's get_key for USERS_JSON to keep
+    Windows backslashes and JSON escapes intact (get_key unescapes for double-
+    quoted values and can break JSON containing paths like F:\\\\...).
     """
     p = env_path()
-    if _HAVE_DOTENV:
+
+    # Avoid dotenv_get_key for USERS_JSON to keep escapes literal
+    if _HAVE_DOTENV and key != "USERS_JSON":
         try:
             val = dotenv_get_key(str(p), key)
             if val is not None:
                 return val
         except Exception:
             pass
-    # Manual parse
+
+    # Manual parse (literal read)
     try:
         for line in p.read_text(encoding="utf-8").splitlines():
             s = line.strip()
@@ -63,6 +70,7 @@ def read_env_file_var_only(key: str) -> Optional[str]:
                 continue
             k, raw = s.split("=", 1)
             if k.strip() == key:
+                # Strip surrounding quotes only; do not unescape backslashes
                 return raw.strip().strip('"').strip("'")
     except Exception:
         return None
@@ -82,14 +90,19 @@ def read_env_var(key: str) -> Optional[str]:
 def write_env_vars(updates: Dict[str, str]) -> Path:
     """
     Write/update keys in .env while preserving other lines.
-    Uses python-dotenv when available; otherwise falls back to manual update.
+
+    For USERS_JSON we avoid python-dotenv's set_key so the JSON string is written
+    with single quotes and without any escape munging (critical for Windows paths).
     """
     p = env_path()
-    if _HAVE_DOTENV:
+
+    # Use dotenv only if available AND we are NOT writing USERS_JSON
+    if _HAVE_DOTENV and ("USERS_JSON" not in updates):
         for k, v in updates.items():
             dotenv_set_key(str(p), k, v)
         return p
 
+    # Manual update path (used when USERS_JSON is present or dotenv absent)
     try:
         lines = p.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -103,8 +116,7 @@ def write_env_vars(updates: Dict[str, str]) -> Path:
             k = k.strip()
             if k in updates:
                 existing.add(k)
-                out_lines = f"{k}={_quote_value(updates[k])}"
-                out.append(out_lines)
+                out.append(f"{k}={_quote_value(updates[k])}")
             else:
                 out.append(line)
         else:
@@ -203,10 +215,25 @@ def ensure_users_json_seed_if_legacy() -> Optional[List[Dict]]:
     """
     If USERS_JSON is empty but legacy AUTH_USERNAME/PASSWORD are set,
     seed USERS_JSON with that admin user.
+
+    Hardened: do NOT seed if a non-empty USERS_JSON string exists in .env or
+    process environment, even if it fails to parse (to avoid overwriting user edits).
     """
+    # Guard 1: if .env already has a non-empty USERS_JSON string, don't overwrite
+    raw_in_file = (read_env_file_var_only("USERS_JSON") or "").strip()
+    if raw_in_file:
+        return None
+
+    # Guard 2: if process env has a non-empty USERS_JSON string, don't overwrite
+    raw_in_env = (os.environ.get("USERS_JSON") or "").strip()
+    if raw_in_env:
+        return None
+
+    # If parsed users are already present (from any source), don't seed
     users = read_users_json()
     if users:
         return None
+
     s = get_settings()
     if s.AUTH_USERNAME and s.AUTH_PASSWORD:
         seeded = [{"username": s.AUTH_USERNAME, "password": s.AUTH_PASSWORD, "roles": ["admin"]}]

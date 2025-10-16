@@ -6,7 +6,8 @@ from .config import get_settings
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import time
-import json
+
+from .env_utils import read_users_json
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -82,13 +83,8 @@ async def login(
 ):
     settings = get_settings()
 
-    # 1) Multi-user JSON mode (preferred if provided)
-    users = []
-    if settings.USERS_JSON.strip():
-        try:
-            users = json.loads(settings.USERS_JSON)
-        except Exception:
-            users = []
+    # Prefer robust, on-disk view of USERS_JSON (same logic as admin panel)
+    users = read_users_json()
 
     if users:
         for u in users:
@@ -97,7 +93,7 @@ async def login(
             if u.get("username") == username and u.get("password") == password:
                 roles = u.get("roles") or ["viewer"]
 
-                # New: per-user allowed roots from USERS_JSON; normalize to absolute strings
+                # Per-user allowed roots from USERS_JSON; normalize to absolute strings
                 roots_raw = u.get("roots") or u.get("allowed_roots") or []
                 roots: List[str] = []
                 if isinstance(roots_raw, list):
@@ -114,7 +110,7 @@ async def login(
                 r.set_cookie(SESSION_COOKIE, token, httponly=True, max_age=SESSION_MAX_AGE, secure=False)
                 return r
     else:
-        # 2) Legacy single-user mode (fallback)
+        # Legacy single-user mode (fallback) only if no USERS_JSON users are configured/readable
         if username == settings.AUTH_USERNAME and password == settings.AUTH_PASSWORD:
             # In legacy mode, grant admin role to keep parity with previous unrestricted behavior
             token = create_session(username, ["admin"])
