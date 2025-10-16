@@ -151,8 +151,8 @@ set "HOST=0.0.0.0"
 set "PORT=8000"
 set "APP_CMD=python -m uvicorn hdd_browser.app.main:app --host %HOST% --port %PORT%"
 
-REM Custom website URL (MagicDNS/Funnel). Only this will open.
-set "CUSTOM_URL=https://your-hostname.ts.net/"
+REM Optional: set your custom website URL (e.g., https://your-hostname.ts.net:8000/)
+set "CUSTOM_URL=https://ideapadgaming3.tailcac1fa.ts.net/auth/login?next=/"
 
 REM Optional app env (only if needed by your app)
 set "APP_NAME=NAS"
@@ -163,27 +163,27 @@ set "ENABLE_THUMBNAILS=1"
 set "ENABLE_HEIC_CONVERSION=1"
 set "THUMB_CACHE_DIR=.thumb_cache"
 set "ALLOWED_ROOTS=C:/,D:/,E:/,F:/,G:/"
-set "HDD_ENV_OVERRIDE=0"
+set "HDD_ENV_OVERRIDE=1"
 
 if not exist "%THUMB_CACHE_DIR%" mkdir "%THUMB_CACHE_DIR%"
 
-echo [Tailscale] Starting service and tray app...
+echo [Tailscale] Starting service and app...
 REM Start the Windows service (ignore error if already running)
 net start Tailscale >nul 2>nul
 
-REM Start the tray UI; run via cmd so output is silenced
-if exist "%ProgramFiles%\Tailscale\Tailscale.exe" start "" cmd /c ""%ProgramFiles%\Tailscale\Tailscale.exe" >nul 2>nul"
-if exist "%ProgramFiles(x86)%\Tailscale\Tailscale.exe" start "" cmd /c ""%ProgramFiles(x86)%\Tailscale\Tailscale.exe" >nul 2>nul"
+REM Start the Tailscale tray UI (no IF lines that parse parentheses)
+start "" "%ProgramFiles%\Tailscale\Tailscale-ipn.exe" 2>nul
+REM start "" "%ProgramFiles(x86)%\Tailscale\Tailscale-ipn.exe" 2>nul
 
 REM Pick the CLI path (fallback to PATH)
 set "TS_CLI=%ProgramFiles%\Tailscale\tailscale.exe"
 if not exist "%TS_CLI%" set "TS_CLI=%ProgramFiles(x86)%\Tailscale\tailscale.exe"
 if not exist "%TS_CLI%" set "TS_CLI=tailscale.exe"
 
-REM Bring the node up using an auth key if provided (no SSH flag on Windows)
-if not "%TAILSCALE_AUTHKEY%"=="" "%TS_CLI%" up --authkey=%TAILSCALE_AUTHKEY% --hostname "%COMPUTERNAME%-nas" --accept-dns=true
+REM If an auth key is provided, bring the node up (no SSH flag on Windows)
+if not "%TAILSCALE_AUTHKEY%"=="" "%TS_CLI%" up --authkey=%TAILSCALE_AUTHKEY% --hostname "files-hub" --accept-dns=true
 
-REM Verify connectivity by polling for a Tailscale IPv4
+REM Verify connectivity by polling for a Tailscale IPv4 (no parentheses in IF blocks)
 set "TS_IP4="
 set "TS_TRIES=0"
 :TS_WAIT
@@ -200,6 +200,19 @@ goto TS_WAIT
 echo [Tailscale] Connected: %TS_IP4%
 :TS_SKIP
 
+REM Decide which URL(s) to open
+set "OPEN_URL=http://localhost:%PORT%/"
+if not "%CUSTOM_URL%"=="" set "OPEN_URL=%CUSTOM_URL%"
+echo.
+echo Launching app with conda env: %ENV_NAME%
+echo Local URL: %OPEN_URL%
+REM if not "%TS_IP4%"=="" echo Tailscale URL: http://%TS_IP4%:%PORT%/
+echo Allowed roots: %ALLOWED_ROOTS%
+echo.
+
+start "" "%OPEN_URL%"
+REM if not "%TS_IP4%"=="" start "" "http://%TS_IP4%:%PORT%/"
+
 REM Ensure conda is available
 where conda >nul 2>nul
 if errorlevel 1 (
@@ -208,24 +221,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM Start the app in a new window and continue
-start "NAS Server" conda run -n "%ENV_NAME%" %APP_CMD%
+REM Run the app (no global activation leakage)
+conda run -n "%ENV_NAME%" %APP_CMD%
 
-REM Wait briefly for readiness, then open the custom site
-echo [App] Waiting for readiness...
-powershell -NoP -Command ^
-  "$u='http://127.0.0.1:%PORT%/healthz';" ^
-  "for($i=0;$i -lt 20;$i++){" ^
-  "  try{ $r=Invoke-RestMethod -UseBasicParsing $u -TimeoutSec 2; if($r.status -eq 'ok'){ exit 0 } }catch{}" ^
-  "  Start-Sleep -Milliseconds 500" ^
-  "} exit 1" >nul 2>nul
-
-REM Open only the custom URL
-start "" "%CUSTOM_URL%"
-
-echo [INFO] App is running in a separate window titled: NAS Server
-echo Press any key to close this helper window (server keeps running)...
-pause >nul
+echo.
+echo [INFO] Server exited.
+pause
 ```
 
 Usage:
