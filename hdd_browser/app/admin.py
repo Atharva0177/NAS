@@ -30,7 +30,7 @@ APP_START_TS = time.time()
 ALLOWED_ROLES = {"admin", "uploader", "deleter", "viewer"}
 
 # Tunables via env (safe defaults)
-ADMIN_STATS_TIME_BUDGET_SEC = float(os.environ.get("ADMIN_STATS_TIME_BUDGET_SEC", "3.0"))
+ADMIN_STATS_TIME_BUDGET_SEC = float(os.environ.get("ADMIN_STATS_TIME_BUDGET_SEC", "0.5"))
 ADMIN_STATS_MAX_ENTRIES_PER_ROOT = int(os.environ.get("ADMIN_STATS_MAX_ENTRIES_PER_ROOT", "50000"))
 ADMIN_THUMB_SIZE_TIME_BUDGET_SEC = float(os.environ.get("ADMIN_THUMB_SIZE_TIME_BUDGET_SEC", "2.0"))
 ADMIN_STATS_BYTES = os.environ.get("ADMIN_STATS_BYTES", "1").lower() in ("1", "true", "yes", "on")

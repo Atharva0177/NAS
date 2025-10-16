@@ -15,7 +15,7 @@ set "PORT=8000"
 set "APP_CMD=python -m uvicorn hdd_browser.app.main:app --host %HOST% --port %PORT%"
 
 REM Optional: set your custom website URL (e.g., https://your-hostname.ts.net:8000/)
-set "CUSTOM_URL=https://idepadgaming3.tailcac1fa.ts.net/auth/login?next=/"
+set "CUSTOM_URL=https://ideapadgaming3.tailcac1fa.ts.net/auth/login?next=/"
 
 REM Optional app env (only if needed by your app)
 set "APP_NAME=NAS"
