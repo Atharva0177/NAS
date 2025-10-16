@@ -4,6 +4,13 @@ itsdangerous==2.2.0
 psutil==5.9.8
 jinja2==3.1.4
 python-multipart==0.0.9
-pydantic==1.10.15
+
+# FastAPI 0.111 uses Pydantic v2
+pydantic==2.8.2
+pydantic-settings==2.4.0
+
+# Required by app/config.py (packaging.version)
+packaging==24.1
+
 Pillow==10.4.0
 pillow-heif==0.15.0

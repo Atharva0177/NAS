@@ -13,16 +13,19 @@ def discover_drives() -> List[Dict]:
     allowed = settings.allowed_roots
     allowed_resolved = [p.resolve() for p in allowed]
 
-    drives = []
+    drives: List[Dict] = []
     system = platform.system().lower()
 
-    partitions = psutil.disk_partitions(all=False)
+    # IMPORTANT: include bind mounts by using all=True
+    partitions = psutil.disk_partitions(all=True)
     for part in partitions:
         mount = Path(part.mountpoint).resolve()
+
         # Filter by allowed roots if any
         if allowed_resolved:
             if not any(str(mount).startswith(str(ar)) for ar in allowed_resolved):
                 continue
+
         try:
             usage = psutil.disk_usage(str(mount))
             drives.append({
@@ -32,15 +35,29 @@ def discover_drives() -> List[Dict]:
                 "total": usage.total,
                 "used": usage.used,
                 "free": usage.free,
-                "percent": usage.percent
+                "percent": usage.percent,
             })
         except PermissionError:
             continue
 
-    # If no allowed roots specified and list ended empty, fall back
-    if not allowed_resolved and not drives:
-        # Possibly user has no partitions accessible
-        pass
+    # Fallback: if allowed roots are set but no partitions matched,
+    # expose the allowed roots themselves as drives (common for bind mounts).
+    if allowed_resolved and not drives:
+        for ar in allowed_resolved:
+            try:
+                usage = psutil.disk_usage(str(ar))
+                drives.append({
+                    "id": str(ar),
+                    "mount_point": str(ar),
+                    "fstype": "bind",
+                    "total": usage.total,
+                    "used": usage.used,
+                    "free": usage.free,
+                    "percent": usage.percent,
+                })
+            except PermissionError:
+                continue
+
     return drives
 
 def resolve_drive_root(drive_id: str) -> Path:
