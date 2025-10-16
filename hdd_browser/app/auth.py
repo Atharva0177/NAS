@@ -127,7 +127,7 @@ async def login(
     templates = Jinja2Templates(directory="hdd_browser/app/templates")
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "error": "Invalid credentials"},
+        {"request": request, "settings": settings, "error": "Invalid credentials"},
         status_code=401
     )
 
