@@ -1,17 +1,28 @@
 import platform
 import psutil
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 from .config import get_settings
 
-def discover_drives() -> List[Dict]:
+def _within_any(p: Path, roots: List[Path]) -> bool:
+    pr = p.resolve()
+    for ar in roots:
+        try:
+            if str(pr).startswith(str(ar.resolve())):
+                return True
+        except Exception:
+            continue
+    return False
+
+def discover_drives(allowed_override: Optional[List[Path]] = None) -> List[Dict]:
     """
     Returns a list of candidate drives / mount points.
-    Filters to only those that intersect with allowed_roots if configured.
+    Filters to only those that intersect with allowed roots if configured.
+    If allowed_override is provided, use that instead of global settings.
     """
     settings = get_settings()
-    allowed = settings.allowed_roots
-    allowed_resolved = [p.resolve() for p in allowed]
+    base_allowed = allowed_override if allowed_override is not None else settings.allowed_roots
+    allowed_resolved = [p.resolve() for p in (base_allowed or [])]
 
     drives: List[Dict] = []
     system = platform.system().lower()
@@ -23,7 +34,7 @@ def discover_drives() -> List[Dict]:
 
         # Filter by allowed roots if any
         if allowed_resolved:
-            if not any(str(mount).startswith(str(ar)) for ar in allowed_resolved):
+            if not _within_any(mount, allowed_resolved):
                 continue
 
         try:
@@ -60,11 +71,12 @@ def discover_drives() -> List[Dict]:
 
     return drives
 
-def resolve_drive_root(drive_id: str) -> Path:
+def resolve_drive_root(drive_id: str, allowed_override: Optional[List[Path]] = None) -> Path:
     """
     Validate the drive_id (mount point) is in discovered set and within allowed roots.
+    Optionally enforce a per-request allowed_override (e.g., per-user roots).
     """
-    drives = discover_drives()
+    drives = discover_drives(allowed_override=allowed_override)
     for d in drives:
         if d["id"] == drive_id:
             return Path(drive_id).resolve()

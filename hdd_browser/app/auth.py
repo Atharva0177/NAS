@@ -4,6 +4,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from starlette.status import HTTP_302_FOUND, HTTP_401_UNAUTHORIZED
 from .config import get_settings
 from typing import Optional, List, Dict, Any
+from pathlib import Path
 import time
 import json
 
@@ -16,11 +17,13 @@ def _serializer():
     settings = get_settings()
     return URLSafeTimedSerializer(settings.SESSION_SECRET, salt="hdd-browser-session")
 
-def create_session(username: str, roles: Optional[List[str]] = None) -> str:
+def create_session(username: str, roles: Optional[List[str]] = None, roots: Optional[List[str]] = None) -> str:
     s = _serializer()
     payload: Dict[str, Any] = {"u": username, "t": int(time.time())}
     if roles:
         payload["r"] = roles
+    if roots:
+        payload["ar"] = roots  # allowed roots for this user
     return s.dumps(payload)
 
 def decode_session(token: str) -> Optional[Dict[str, Any]]:
@@ -46,7 +49,16 @@ def user_info(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
-    return decode_session(token)
+    data = decode_session(token)
+    if not data:
+        return None
+    # Normalize expected fields
+    info = {
+        "u": data.get("u"),
+        "r": data.get("r") or [],
+        "ar": data.get("ar") or [],
+    }
+    return info
 
 def require_user(request: Request):
     user = current_user(request)
@@ -84,7 +96,20 @@ async def login(
                 continue
             if u.get("username") == username and u.get("password") == password:
                 roles = u.get("roles") or ["viewer"]
-                token = create_session(username, roles)
+
+                # New: per-user allowed roots from USERS_JSON; normalize to absolute strings
+                roots_raw = u.get("roots") or u.get("allowed_roots") or []
+                roots: List[str] = []
+                if isinstance(roots_raw, list):
+                    for p in roots_raw:
+                        if isinstance(p, str) and p.strip():
+                            try:
+                                roots.append(str(Path(p).expanduser().resolve()))
+                            except Exception:
+                                # skip invalid/failed normalization
+                                pass
+
+                token = create_session(username, roles, roots)
                 r = RedirectResponse("/", status_code=HTTP_302_FOUND)
                 r.set_cookie(SESSION_COOKIE, token, httponly=True, max_age=SESSION_MAX_AGE, secure=False)
                 return r

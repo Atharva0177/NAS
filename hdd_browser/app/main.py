@@ -26,7 +26,7 @@ Update `security.py` to adjust what is public.
 import io
 import mimetypes
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from fastapi import (
     FastAPI,
@@ -134,10 +134,44 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 
 # ---------------------------------------------------------------------------
-# Helper: Determine if current user can upload (UI flag only)
-# - Honors global ENABLE_UPLOAD
-# - If roles are available (multi-user edit installed), requires admin or uploader
-# - If roles are not available (legacy single-user), any authenticated user can upload when globally enabled
+# Helper: Determine per-request allowed roots (intersection of user and global)
+# ---------------------------------------------------------------------------
+def _user_allowed_roots(request: Request) -> List[Path]:
+    """
+    Compute the effective allowed roots for the current user:
+      - If the session provides 'ar' (allowed roots), intersect with global ALLOWED_ROOTS.
+      - If not, fall back to global ALLOWED_ROOTS.
+    """
+    s = get_settings()
+    global_roots = [p.resolve() for p in (s.allowed_roots or [])]
+
+    if not (_HAVE_USER_INFO and _user_info):
+        return global_roots
+
+    info = _user_info(request) or {}
+    user_root_strs = info.get("ar") or []
+    user_roots: List[Path] = []
+    for r in user_root_strs:
+        try:
+            user_roots.append(Path(r).expanduser().resolve())
+        except Exception:
+            pass
+
+    if not user_roots:
+        return global_roots
+
+    if not global_roots:
+        return user_roots
+
+    # Intersection: keep only user roots that are within a global root
+    out: List[Path] = []
+    for ur in user_roots:
+        if any(str(ur).startswith(str(gr)) for gr in global_roots):
+            out.append(ur)
+    return out or global_roots
+
+# ---------------------------------------------------------------------------
+# Helper: Determine if current user can upload or delete (UI flags)
 # ---------------------------------------------------------------------------
 def _can_user_upload(request: Request) -> bool:
     s = get_settings()
@@ -149,10 +183,6 @@ def _can_user_upload(request: Request) -> bool:
     # Legacy single-user mode (no roles): allow uploads for any logged-in user when globally enabled
     return True
 
-# NEW: Helper for delete permission (UI flag only)
-# - Honors global ENABLE_DELETE
-# - If roles are available, requires admin or deleter
-# - In legacy mode (no roles), any authenticated user can delete when globally enabled
 def _can_user_delete(request: Request) -> bool:
     s = get_settings()
     if not s.ENABLE_DELETE:
@@ -232,7 +262,7 @@ async def browse_page(
 ):
     user = require_user(request)
     can_upload = _can_user_upload(request)
-    can_delete = _can_user_delete(request)  # NEW: pass delete permission to template
+    can_delete = _can_user_delete(request)  # pass delete permission to template
     # Pass fresh settings each render
     return templates.TemplateResponse(
         "browse.html",
@@ -252,7 +282,8 @@ async def search_page(request: Request):
 @app.get("/api/drives")
 async def api_drives(request: Request):
     require_user(request)
-    return discover_drives()
+    allowed = _user_allowed_roots(request)
+    return discover_drives(allowed_override=allowed)
 
 @app.get("/api/list")
 async def api_list(
@@ -261,7 +292,8 @@ async def api_list(
     rel_path: str = Query("", description="Relative path inside drive")
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.exists():
         raise HTTPException(status_code=404, detail="Not found")
@@ -285,7 +317,8 @@ async def api_preview(
     rel_path: str
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
@@ -299,7 +332,8 @@ async def api_download(
     rel_path: str
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -313,7 +347,8 @@ async def api_view(
     rel_path: str
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -374,7 +409,8 @@ async def api_stream(
     rel_path: str
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -451,7 +487,8 @@ async def api_search(
 ):
     require_user(request)
     s = get_settings()
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     depth = depth or s.SEARCH_DEFAULT_DEPTH
     limit = min(limit or s.MAX_SEARCH_RESULTS, s.MAX_SEARCH_RESULTS)
     return {
@@ -481,7 +518,8 @@ async def api_delete(
     if roles and not (("admin" in roles) or ("deleter" in roles)):
         raise HTTPException(status_code=403, detail="Not authorized to delete")
 
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     # For safety, never allow deleting the drive root itself
     if target == root:
@@ -505,7 +543,8 @@ async def api_upload(
     s = get_settings()
     if not s.ENABLE_UPLOAD:
         raise HTTPException(status_code=403, detail="Upload disabled")
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target_dir = safe_join(root, rel_path or "")
     # If the path exists but is not a directory, reject
     if target_dir.exists() and not target_dir.is_dir():
@@ -529,7 +568,8 @@ async def api_thumb(
     refresh: int = 0
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -567,7 +607,8 @@ async def api_render_image(
     max_dim: int = Query(0, description="Resize largest dimension (0 = original size if non-HEIC)")
 ):
     require_user(request)
-    root = resolve_drive_root(drive_id)
+    allowed = _user_allowed_roots(request)
+    root = resolve_drive_root(drive_id, allowed_override=allowed)
     target = safe_join(root, rel_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Not found")

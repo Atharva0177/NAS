@@ -76,6 +76,29 @@ def _validate_roles_csv(roles_csv: Optional[str]) -> List[str] | None:
         raise HTTPException(status_code=400, detail=f"Invalid roles: {', '.join(sorted(set(invalid)))}")
     return roles
 
+def _parse_roots_csv(roots_csv: Optional[str]) -> List[str]:
+    """
+    Parse a comma-separated list of roots, normalize to absolute paths,
+    and ensure they exist and (optionally) are within global ALLOWED_ROOTS.
+    """
+    if roots_csv is None:
+        return []
+    s = get_settings()
+    global_allowed = [p.resolve() for p in (s.allowed_roots or [])]
+    items = [r.strip() for r in roots_csv.split(",") if r.strip()]
+    out: List[str] = []
+    for raw in items:
+        p = Path(raw).expanduser().resolve()
+        if not p.exists() or not p.is_dir():
+            raise HTTPException(status_code=400, detail=f"Path not found or not a directory: {p}")
+        # Enforce that user roots lie under global allowed_roots if global is set
+        if global_allowed and not any(str(p).startswith(str(gr)) for gr in global_allowed):
+            raise HTTPException(status_code=400, detail=f"Path not within global ALLOWED_ROOTS: {p}")
+        sp = str(p)
+        if sp not in out:
+            out.append(sp)
+    return out
+
 
 @router.get("/api/admin/users")
 async def admin_users_list(request: Request):
@@ -83,7 +106,12 @@ async def admin_users_list(request: Request):
     # Seed USERS_JSON from legacy AUTH_* if empty (first-time setups)
     ensure_users_json_seed_if_legacy()
     users = read_users_json()
-    redacted = [{"username": u["username"], "roles": u.get("roles") or [], "has_password": bool(u.get("password"))} for u in users]
+    redacted = [{
+        "username": u["username"],
+        "roles": u.get("roles") or [],
+        "has_password": bool(u.get("password")),
+        "roots": u.get("roots") or []
+    } for u in users]
     print(f"[admin] users: returned {len(redacted)} users")
     return JSONResponse({"users": redacted}, headers={"Cache-Control": "no-store"})
 
@@ -94,6 +122,7 @@ async def admin_users_create(
     username: str = Form(...),
     password: str = Form(""),
     roles: str = Form("viewer"),
+    allowed_roots: str = Form(""),
 ):
     _require_admin(request)
     username = (username or "").strip()
@@ -105,7 +134,8 @@ async def admin_users_create(
         raise HTTPException(status_code=409, detail="User already exists")
 
     roles_list = _validate_roles_csv(roles) or ["viewer"]
-    users.append({"username": username, "password": password or "", "roles": roles_list})
+    roots_list = _parse_roots_csv(allowed_roots)
+    users.append({"username": username, "password": password or "", "roles": roles_list, "roots": roots_list})
     write_users_json(users)
     return JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})
 
@@ -116,6 +146,7 @@ async def admin_users_update(
     username: str = Form(...),
     password: str | None = Form(None),
     roles: str | None = Form(None),
+    allowed_roots: str | None = Form(None),
 ):
     _require_admin(request)
     username = (username or "").strip()
@@ -132,6 +163,8 @@ async def admin_users_update(
         users[idx]["roles"] = _validate_roles_csv(roles) or []
     if password is not None:
         users[idx]["password"] = password or ""
+    if allowed_roots is not None:
+        users[idx]["roots"] = _parse_roots_csv(allowed_roots)
 
     write_users_json(users)
     return JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})

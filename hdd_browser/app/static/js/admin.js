@@ -266,7 +266,7 @@
 .feature-toggles .ios-toggle { width:51px;height:31px;position:relative; }
 .feature-toggles .ios-checkbox { opacity:0;width:0;height:0;position:absolute; }
 .feature-toggles .ios-switch { width:100%;height:100%;display:block;background:#e9e9eb;border-radius:16px;cursor:pointer;transition:all .2s ease-out; }
-.feature-toggles .ios-slider { width:27px;height:27px;position:absolute;left:calc(50% - 27px/2 - 10px);top:calc(50% - 27px/2);border-radius:50%;background:#fff;box-shadow:0 3px 8px rgba(0,0,0,.15),0 3px 1px rgba(0,0,0,.06);transition:all .2s ease-out;cursor:pointer; }
+.feature-toggles .ios-slider { width:27px;height:27px;position:absolute;left:calc(50% - 27px/2 - 10px);top:calc(50% - 27px/2);border-radius:50%;background:#fff;box-shadow:0 3px 8px rgba(0,0,0,.15);transition:all .2s ease-out; }
 .feature-toggles .ios-checkbox:checked + .ios-switch { background:#34C759; }
 .feature-toggles .ios-checkbox:checked + .ios-switch .ios-slider { left:calc(50% - 27px/2 + 10px);top:calc(50% - 27px/2); }
     `;
@@ -440,6 +440,9 @@
           </div>
         </td>
         <td>
+          <input class="roots-input" type="text" name="allowed_roots" placeholder="D:/Media,E:/Photos" value="${(u.roots || []).join(',')}" />
+        </td>
+        <td>
           <input class="password-input" type="password" name="password" placeholder="${u.has_password ? '••••••' : 'set password'}" />
         </td>
         <td class="actions">
@@ -451,11 +454,15 @@
       tr.querySelector('[data-action="save"]').addEventListener("click", async () => {
         const roles = selectedRolesFrom(tr);
         const pwdInput = tr.querySelector('input[name="password"]');
+        const rootsInput = tr.querySelector('input[name="allowed_roots"]');
         const form = new FormData();
         form.append("username", u.username);
         form.append("roles", roles.join(","));
         if (pwdInput && pwdInput.value) {
           form.append("password", pwdInput.value);
+        }
+        if (rootsInput) {
+          form.append("allowed_roots", rootsInput.value || "");
         }
         try {
           await postForm("/api/admin/users/update", form);
@@ -494,11 +501,13 @@
 
       const usernameEl = scope.querySelector('input[name="username"]');
       const passwordEl = scope.querySelector('input[name="password"]');
+      const rootsEl = scope.querySelector('input[name="allowed_roots"]');
       const roleChecks = scope.querySelectorAll('input[name="role"]:checked');
 
       const username = usernameEl ? usernameEl.value.trim() : "";
       const password = passwordEl ? passwordEl.value : "";
       const roles = Array.from(roleChecks).map(i => i.value);
+      const allowed_roots = rootsEl ? rootsEl.value : "";
 
       if (!username) {
         alert("Please enter a username.");
@@ -512,14 +521,20 @@
       fd.append("username", username);
       fd.append("password", password);
       fd.append("roles", roles.length ? roles.join(",") : "viewer");
+      fd.append("allowed_roots", allowed_roots);
 
       try {
         await postForm("/api/admin/users/create", fd);
         if (usernameEl) usernameEl.value = "";
         if (passwordEl) passwordEl.value = "";
+        if (rootsEl) rootsEl.value = "";
         scope.querySelectorAll('input[name="role"]').forEach(i => { i.checked = false; });
         await loadUsers();
+        const msg = document.getElementById("createMsg");
+        if (msg) msg.textContent = "User created.";
       } catch (err) {
+        const msg = document.getElementById("createMsg");
+        if (msg) msg.textContent = "Create failed.";
         alert("Create failed: " + (err && err.message ? err.message : String(err)));
       } finally {
         if (btn) btn.disabled = false;

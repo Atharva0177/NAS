@@ -98,7 +98,7 @@
   <div class="panel">
     <div class="panel-header">
       <h3>Create User</h3>
-      <span class="muted">Add a new user and assign roles</span>
+      <span class="muted">Add a new user and assign roles and allowed roots</span>
     </div>
     <br>
     <br/>
@@ -110,7 +110,11 @@
         <label>Password
           <input type="password" name="password" required />
         </label>
-        <br>
+      </div>
+      <div class="row">
+        <label>Allowed roots (comma-separated)
+          <input type="text" name="allowed_roots" placeholder="e.g., D:/Media,E:/Photos" />
+        </label>
       </div>
       <div class="roles">
         <div class="roles-title">Roles</div>
@@ -130,7 +134,7 @@
 <section class="panel">
   <div class="panel-header">
     <h3>User Management</h3>
-    <span class="muted">Modify roles or passwords. At least one admin is required.</span>
+    <span class="muted">Modify roles, passwords, or allowed roots. At least one admin is required.</span>
   </div>
   <div class="table-wrap">
     <table id="usersTable" class="tbl">
@@ -138,12 +142,13 @@
         <tr>
           <th>User</th>
           <th>Roles</th>
+          <th>Allowed roots</th>
           <th>Password</th>
           <th class="right">Actions</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td colspan="4" class="muted">Loading…</td></tr>
+        <tr><td colspan="5" class="muted">Loading…</td></tr>
       </tbody>
     </table>
   </div>

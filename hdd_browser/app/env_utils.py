@@ -136,7 +136,19 @@ def _parse_users_json(raw: str) -> List[Dict]:
         roles = u.get("roles") or []
         if not isinstance(roles, list):
             roles = []
-        out.append({"username": uname, "password": pwd, "roles": roles})
+
+        # NEW: parse per-user allowed roots if provided
+        roots_in = u.get("roots") or u.get("allowed_roots") or []
+        roots: List[str] = []
+        if isinstance(roots_in, list):
+            for r in roots_in:
+                if isinstance(r, str) and r.strip():
+                    try:
+                        roots.append(str(Path(r).expanduser().resolve()))
+                    except Exception:
+                        pass
+
+        out.append({"username": uname, "password": pwd, "roles": roles, "roots": roots})
     return out
 
 
