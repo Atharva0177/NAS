@@ -230,11 +230,11 @@ pause
 ```
 
 Usage:
-1) Save as `run_nas.bat` in the repo root (same folder that contains `hdd_browser`).
+1) Save as `NAS.bat` in the repo root (same folder that contains `hdd_browser`).
 2) Optional (for unattended login): in CMD, run `setx TAILSCALE_AUTHKEY tskey-...` then open a new terminal.
 3) From an Anaconda Prompt or a shell with `conda` on PATH:
    - `cd NAS`
-   - `run_nas.bat nas`
+   - `NAS.bat nas`
 4) Visit your custom URL (the script opens it after the app is ready).
 
 If you’re not using Tailscale yet, set `CUSTOM_URL=http://localhost:8000/`.
