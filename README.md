@@ -1,373 +1,359 @@
-# 📂 NAS (Network Attached Storage)
 
-A self‑hosted, password‑protected web app to browse, preview, and stream files from your local or mounted drives.
+# NAS (Network Attached Storage) – Fast, simple web UI to browse, preview, upload, and manage files
 
-Backend: FastAPI • Frontend: Jinja + Vanilla JS
+A lightweight FastAPI-based web UI to browse local or mounted disks, preview and stream files, generate thumbnails, and optionally upload/delete content. Works natively on Windows/macOS/Linux and with Conda. Supports single-user or multi-user auth with roles. Can be accessed over your LAN or securely over [Tailscale](https://tailscale.com) (Serve/Funnel).
 
-Highlights
-- 🔑 Login protection (signed sessions)
-- 📂 Drive browsing with safe path handling
-- 🖼 Thumbnails for images (and video posters)
-- 🎬 Streaming with range requests (seek)
-- 🔍 Search
-- 🧭 Clean, responsive UI with list/grid views
-- 🧩 Rich, in‑popup previews for many file types (see below)
+This guide provides a clean, step-by-step setup without Docker, including a Windows one-click launcher (.bat).
 
 ---
 
-## ⚡ Quick Start
+## 1) Requirements
 
-1) Clone
+- Git
+- Python 3.10+ (3.11/3.12 recommended) or Conda (Miniconda/Anaconda)
+- pip
+- On Windows: run from an “Anaconda Prompt” if using Conda (so `conda` is on PATH)
+- Optional: [Tailscale](https://tailscale.com/download) if you want access over your tailnet or via Funnel
+
+Notes:
+- Windows native runs use Windows-style paths in config (e.g., `D:/Data`).
+- Linux/macOS use POSIX paths (e.g., `/mnt/data`).
+
+---
+
+## 2) Clone the repo
+
 ```bash
 git clone https://github.com/Atharva0177/NAS.git
 cd NAS
 ```
 
-2) Python env + dependencies
+---
+
+## 3) Configure environment (.env)
+
+The app reads configuration from environment variables. It can also auto-discover a `.env` file. Recommended: create one at `hdd_browser/app/.env` (or use OS/Process env vars).
+
+Minimal example:
+
+```env
+# hdd_browser/app/.env
+APP_NAME=NAS
+HOST=0.0.0.0
+PORT=8000
+DEBUG=false
+
+# Auth (change immediately for security)
+AUTH_USERNAME=admin
+AUTH_PASSWORD=admin
+SESSION_SECRET=please_change_me_long_random_32chars_min
+
+# Feature toggles
+ENABLE_UPLOAD=true
+ENABLE_DELETE=false
+ENABLE_THUMBNAILS=true
+ENABLE_HEIC_CONVERSION=true
+
+# Thumbnail cache directory (relative or absolute)
+THUMB_CACHE_DIR=.thumb_cache
+
+# Allowed roots (comma-separated)
+# Windows (native):
+ALLOWED_ROOTS=C:/,D:/,E:/Data
+# Linux/macOS (native):
+# ALLOWED_ROOTS=/, /mnt/storage, /home/user
+
+# Control dotenv override behavior:
+# If 1/true: values from .env can override process env vars.
+# If 0/false: process env wins over .env (safer when launching via scripts).
+HDD_ENV_OVERRIDE=0
+```
+
+Important:
+- `SESSION_SECRET` must be ≥ 16 characters; prefer 32+ random chars.
+- `ALLOWED_ROOTS` entries must exist and be directories; only those will be used.
+- If you pass env vars via a .bat or shell, set `HDD_ENV_OVERRIDE=0` to prevent the repo’s `.env` from overriding them.
+
+Optional: set `HDD_ENV_FILE=...` to force using a specific `.env` path.
+
+---
+
+## 4) Run natively (Python + pip)
+
+Create a virtual environment and install dependencies:
+
 ```bash
-python3 -m venv .venv
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+# From repo root
+python -m venv .venv
+
+# Windows:
+.\.venv\Scripts\activate
+# macOS/Linux:
 source .venv/bin/activate
+
+pip install --upgrade pip
 pip install -r hdd_browser/requirements.txt
 ```
 
-3) Configure minimal env vars
-- Linux/macOS:
+Run the server:
+
 ```bash
-export AUTH_USERNAME=admin
-export AUTH_PASSWORD=secret
-export SESSION_SECRET=change_this_to_a_long_random_value
-```
-- Windows PowerShell:
-```powershell
-setx AUTH_USERNAME admin
-setx AUTH_PASSWORD secret
-setx SESSION_SECRET change_this_to_a_long_random_value
+python -m uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-4) Run
+Open your browser: http://localhost:8000
+
+First login (default): `admin` / `admin` → change these immediately (see Users section).
+
+---
+
+## 5) Run with Conda (optional)
+
 ```bash
-uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080 --reload
-```
+# Create and activate env
+conda create -n nas python=3.11 -y
+conda activate nas
 
-5) Open
-```
-http://localhost:8080
+# Install dependencies
+pip install --upgrade pip
+pip install -r hdd_browser/requirements.txt
+
+# Run
+python -m uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ---
 
-## ✨ What’s New
+## 6) Windows one‑click launcher (.bat)
 
-- In‑popup viewers (client‑only, no server plugins):
-  - DOCX → HTML via Mammoth.js
-  - XLSX/XLS/CSV → tables via SheetJS (XLSX)
-  - JSON/JSO/IPYNB → pretty‑printed JSON
-  - XML → pretty‑printed in code modal
-  - YAML/YML → parsed and re‑dumped with js‑yaml when available
-  - TXT/CPP/PY → raw code modal
-  - PDF → embedded inline
-- Video: MKV support added in the UI. Playback depends on browser codecs.
-- Robust multi‑CDN loader with optional local vendor fallback for viewer libraries.
+This launcher will:
+- Start the Tailscale Windows service and tray app
+- Verify Tailscale connectivity (polls for a TS IPv4)
+- Start the app using your existing Conda environment
+- Open your custom website (e.g., MagicDNS or Funnel URL)
+
+Customize `ENV_NAME` (your Conda env) and `CUSTOM_URL` (your site). If you have a Tailscale auth key, set it once with `setx TAILSCALE_AUTHKEY tskey-...` and reopen your terminal.
+
+```bat
+@echo off
+setlocal
+
+REM Run from this script's directory
+cd /d "%~dp0"
+
+REM ======== Config ========
+REM Pass your conda env as the first arg, else default to 'nas'
+set "ENV_NAME=%~1"
+if "%ENV_NAME%"=="" set "ENV_NAME=nas"
+
+REM Your app command (adjust as needed)
+set "HOST=0.0.0.0"
+set "PORT=8000"
+set "APP_CMD=python -m uvicorn hdd_browser.app.main:app --host %HOST% --port %PORT%"
+
+REM Custom website URL (MagicDNS/Funnel). Only this will open.
+set "CUSTOM_URL=https://your-hostname.ts.net/"
+
+REM Optional app env (only if needed by your app)
+set "APP_NAME=NAS"
+set "DEBUG=False"
+set "ENABLE_UPLOAD=1"
+set "ENABLE_DELETE=1"
+set "ENABLE_THUMBNAILS=1"
+set "ENABLE_HEIC_CONVERSION=1"
+set "THUMB_CACHE_DIR=.thumb_cache"
+set "ALLOWED_ROOTS=C:/,D:/,E:/,F:/,G:/"
+set "HDD_ENV_OVERRIDE=0"
+
+if not exist "%THUMB_CACHE_DIR%" mkdir "%THUMB_CACHE_DIR%"
+
+echo [Tailscale] Starting service and tray app...
+REM Start the Windows service (ignore error if already running)
+net start Tailscale >nul 2>nul
+
+REM Start the tray UI; run via cmd so output is silenced
+if exist "%ProgramFiles%\Tailscale\Tailscale.exe" start "" cmd /c ""%ProgramFiles%\Tailscale\Tailscale.exe" >nul 2>nul"
+if exist "%ProgramFiles(x86)%\Tailscale\Tailscale.exe" start "" cmd /c ""%ProgramFiles(x86)%\Tailscale\Tailscale.exe" >nul 2>nul"
+
+REM Pick the CLI path (fallback to PATH)
+set "TS_CLI=%ProgramFiles%\Tailscale\tailscale.exe"
+if not exist "%TS_CLI%" set "TS_CLI=%ProgramFiles(x86)%\Tailscale\tailscale.exe"
+if not exist "%TS_CLI%" set "TS_CLI=tailscale.exe"
+
+REM Bring the node up using an auth key if provided (no SSH flag on Windows)
+if not "%TAILSCALE_AUTHKEY%"=="" "%TS_CLI%" up --authkey=%TAILSCALE_AUTHKEY% --hostname "%COMPUTERNAME%-nas" --accept-dns=true
+
+REM Verify connectivity by polling for a Tailscale IPv4
+set "TS_IP4="
+set "TS_TRIES=0"
+:TS_WAIT
+del "%TEMP%\ts_ip4.txt" >nul 2>nul
+"%TS_CLI%" ip -4 > "%TEMP%\ts_ip4.txt" 2>nul
+set /p TS_IP4=<"%TEMP%\ts_ip4.txt"
+if not "%TS_IP4%"=="" goto TS_OK
+set /a TS_TRIES=%TS_TRIES%+1
+if %TS_TRIES% GEQ 10 goto TS_SKIP
+echo [Tailscale] Waiting for connection (%TS_TRIES%/10)...
+ping -n 2 127.0.0.1 >nul
+goto TS_WAIT
+:TS_OK
+echo [Tailscale] Connected: %TS_IP4%
+:TS_SKIP
+
+REM Ensure conda is available
+where conda >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] 'conda' not found in PATH. Open "Anaconda Prompt" or add conda to PATH.
+  pause
+  exit /b 1
+)
+
+REM Start the app in a new window and continue
+start "NAS Server" conda run -n "%ENV_NAME%" %APP_CMD%
+
+REM Wait briefly for readiness, then open the custom site
+echo [App] Waiting for readiness...
+powershell -NoP -Command ^
+  "$u='http://127.0.0.1:%PORT%/healthz';" ^
+  "for($i=0;$i -lt 20;$i++){" ^
+  "  try{ $r=Invoke-RestMethod -UseBasicParsing $u -TimeoutSec 2; if($r.status -eq 'ok'){ exit 0 } }catch{}" ^
+  "  Start-Sleep -Milliseconds 500" ^
+  "} exit 1" >nul 2>nul
+
+REM Open only the custom URL
+start "" "%CUSTOM_URL%"
+
+echo [INFO] App is running in a separate window titled: NAS Server
+echo Press any key to close this helper window (server keeps running)...
+pause >nul
+```
+
+Usage:
+1) Save as `run_nas.bat` in the repo root (same folder that contains `hdd_browser`).
+2) Optional (for unattended login): in CMD, run `setx TAILSCALE_AUTHKEY tskey-...` then open a new terminal.
+3) From an Anaconda Prompt or a shell with `conda` on PATH:
+   - `cd NAS`
+   - `run_nas.bat nas`
+4) Visit your custom URL (the script opens it after the app is ready).
+
+If you’re not using Tailscale yet, set `CUSTOM_URL=http://localhost:8000/`.
 
 ---
 
-## 🧩 File Preview Matrix (Popup)
+## 7) Authentication and users
 
-- Images: jpg, jpeg, png, webp, gif, bmp, heic/heif, avif, tiff
-- Videos: mp4, webm, mov, m4v, avi, mkv, ogv/ogg
-  - Note: MKV playback depends on the video/audio codecs your browser supports.
-- Documents:
-  - PDF: embedded inline
-  - DOCX: rendered to HTML (Mammoth.js)
-  - XLSX/XLS/CSV: rendered as tables (SheetJS)
-  - DOC/PPT/PPTX: not supported in‑browser; use Open/Download
-- Text/Code:
-  - json, jso, ipynb (pretty JSON), txt, cpp, py, xml (pretty), yaml/yml (pretty with js‑yaml)
+By default, single-user auth uses `AUTH_USERNAME` and `AUTH_PASSWORD`.
 
-Large text previews are truncated to keep the UI fast:
-- Max ~1.5 MB raw text
-- CSV/TXT inline rendering capped to a safe number of lines
+Multi-user mode: provide `USERS_JSON` as a JSON string. Roles control capabilities:
+- `admin` – full access including admin panel
+- `uploader` – can upload files (if `ENABLE_UPLOAD=true`)
+- `deleter` – can delete files (if `ENABLE_DELETE=true`)
+- `viewer` – read-only browsing
 
----
-
-## 📦 Optional: Offline / Air‑gapped Vendor Setup
-
-The app loads client‑viewer libraries from public CDNs by default. To self‑host them:
-
-1) Create a static vendor folder, for example:
-```
-hdd_browser/app/static/vendor/libs/
-```
-
-2) Download these files into that folder (names shown as expected by the loader if you customize it):
-- Mammoth: `mammoth.browser.min.js`
-- SheetJS: `xlsx.full.min.js`
-- js‑yaml (optional, YAML pretty‑print): `js-yaml.min.js`
-
-3) In your base template (before `app.js`), set your preferred base if you add a local loader:
-```html
-<script>window.PPTX_VENDOR_BASE = "/static/vendor/libs/";</script>
-```
-
-The loader will try your local files first, then CDNs (if configured that way).
-
----
-
-## 🔧 Configuration
-
-You can use environment variables or a `.env` file (auto‑loaded by the app).
-
-Common variables:
-- `APP_NAME` – UI title
-- `HOST`, `PORT` – server bind
-- `DEBUG` – True/False
-- `AUTH_USERNAME`, `AUTH_PASSWORD` – login credentials
-- `SESSION_SECRET` – 16+ char secret for signed cookies
-- `ENABLE_UPLOAD` – True/False
-- `ENABLE_DELETE` – True/False
-- `ENABLE_THUMBNAILS` – True/False
-- `THUMB_CACHE_DIR` – path to thumbnail cache
-- `FFMPEG_PATH` – override ffmpeg path (video thumbs/posters)
-- `ENABLE_HEIC_CONVERSION` – True/False
-- `ALLOWED_ROOTS` – comma‑separated allowed root directories (limits browsing scope)
-
-Frontend toggles (set via page scripts or template globals):
-- `THUMB_MAX_CONC` – control thumbnail load concurrency (default 1 for strict serial)
-
-Example `.env`:
+Example `USERS_JSON`:
 ```env
-APP_NAME=NAS
-DEBUG=True
-AUTH_USERNAME=admin
-AUTH_PASSWORD=secret
-SESSION_SECRET=change_me_long_random
-ENABLE_UPLOAD=True
-ENABLE_DELETE=False
-ENABLE_THUMBNAILS=True
-THUMB_CACHE_DIR=.thumb_cache
-ALLOWED_ROOTS=/mnt/storage,/home
+USERS_JSON=[
+  {"username":"admin","password":"admin_pw_change_me","roles":["admin"]},
+  {"username":"bob","password":"bob_pw","roles":["viewer"]},
+  {"username":"carol","password":"carol_pw","roles":["uploader","deleter"]}
+]
 ```
+
+Admin panel: `http://localhost:8000/admin` (requires `admin` role). Shows roots reachability, quick stats, user listing, environment info.
 
 ---
 
-## 🖥 Running in Production
+## 8) Features and API
 
-Uvicorn example:
+- Drives list: `GET /api/drives` (authenticated; derived from system partitions filtered by `ALLOWED_ROOTS`)
+- List directory: `GET /api/list?drive_id=&rel_path=`
+- Preview file: `GET /api/preview?drive_id=&rel_path=`
+- Download: `GET /api/download?drive_id=&rel_path=`
+- Stream (range): `GET /api/stream?drive_id=&rel_path=`
+- Thumbnails: `GET /api/thumb?drive_id=&rel_path=&size=`
+- Render/resize image, HEIC→JPEG: `GET /api/render_image?drive_id=&rel_path=&max_dim=`
+- Search: `GET /api/search?drive_id=&query=&depth=&limit=`
+- Health: `GET /healthz` → `{ "status": "ok" }`
+
+Note: All except `/healthz` require authentication.
+
+---
+
+## 9) Optional: Publish over Tailscale (Serve/Funnel)
+
+If you want your `.ts.net` URL to reach this app:
+
+1) Ensure Tailscale is connected on the machine (`tailscale up` → `tailscale status`).
+2) Serve your local app over HTTPS on 443 via Tailscale proxy:
+   ```bash
+   tailscale serve --bg  http://127.0.0.1:8000
+   ```
+3) Enable Funnel (public internet via `*.ts.net`):
+   ```bash
+   tailscale funnel --bg 8000 
+   ```
+4) Verify:
+   ```bash
+   tailscale serve status
+   ```
+Then open your Funnel URL (e.g., `https://your-hostname.ts.net/`). If permission is required, enable Funnel for the tailnet and/or tags in the Admin Console.
+
+Tip (Windows): You can add these `tailscale serve/funnel` commands to your `.bat` after the “Connected” check if you want automation.
+
+---
+
+## 10) Troubleshooting
+
+- Port already in use (Windows error 10048 / “address already in use”):
+  - Free the port:
+    ```bat
+    netstat -ano | findstr :8000
+    taskkill /PID <pid> /F
+    ```
+  - Or change the app port consistently (in `.env` or `.bat` and in your reverse proxy/Tailscale serve mapping).
+
+- `/api/drives` returns `[]`:
+  - Ensure you’re logged in (endpoint is authenticated).
+  - Confirm `ALLOWED_ROOTS` directories exist and are readable.
+  - On Windows native: use Windows-style paths (e.g., `D:/`).
+
+- Credentials don’t change:
+  - If the repo’s `.env` overrides your runtime variables, set `HDD_ENV_OVERRIDE=0` in `.env` or via your launcher so process env wins.
+
+- Permission denied on system folders:
+  - Normal for protected paths (Windows). Browse into user folders instead.
+
+- Thumbnails slow/missing:
+  - Ensure `ENABLE_THUMBNAILS=true` and `THUMB_CACHE_DIR` is writable.
+
+- HEIC conversion:
+  - Requires Pillow with HEIF support; if not available, conversion is skipped/fails. Disable via `ENABLE_HEIC_CONVERSION=false` or install `pillow-heif`.
+
+---
+
+## 11) Security checklist
+
+- Change default `AUTH_USERNAME`/`AUTH_PASSWORD` immediately.
+- Use a strong `SESSION_SECRET` (32+ random characters).
+- Limit `ALLOWED_ROOTS` to only what you want exposed.
+- Prefer read-only access for sensitive data; grant write only where necessary.
+- Put the app behind HTTPS (reverse proxy, Tailscale Serve, or TLS terminator).
+- For public exposure, prefer Tailscale Funnel or a carefully configured reverse proxy with authentication.
+
+---
+
+## 12) Development
+
+Run with auto-reload (dev only):
+
 ```bash
-uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
+# In your shell or .env
+export DEBUG=1  # Windows PowerShell: $env:DEBUG='1'
+python -m uvicorn hdd_browser.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Systemd unit (example):
-```ini
-[Unit]
-Description=NAS (FastAPI)
-After=network.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-WorkingDirectory=/path/to/NAS
-Environment=PATH=/path/to/NAS/.venv/bin
-ExecStart=/path/to/NAS/.venv/bin/uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+Entrypoint:
+- ASGI app: `hdd_browser.app.main:app`
+- `python -m hdd_browser.app.main` uses the `run()` helper in `main.py`
 
 ---
-
-## 🌐 Remote Access with Tailscale (Windows, macOS, Linux)
-
-Tailscale gives you a private, encrypted network between your devices. You can access your NAS UI from anywhere without port‑forwarding.
-
-### A. Install & Sign In
-
-- Download and install [Tailscale](https://tailscale.com/download) on your NAS and client devices.
-- Sign in with the same account on all devices.
-- On the NAS, verify it’s connected:
-```powershell
-# Windows PowerShell
-& "C:\Program Files\Tailscale\tailscale.exe" status
-& "C:\Program Files\Tailscale\tailscale.exe" ip -4
-```
-You should see a 100.x.x.x Tailscale IP (and a `.ts.net` MagicDNS name if enabled).
-
-### B. Run NAS and bind to all interfaces
-
-Start NAS:
-```bash
-uvicorn hdd_browser.app.main:app --host 0.0.0.0 --port 8080
-```
-
-Optional (Windows Firewall): allow inbound on 8080 for local/LAN use
-```powershell
-New-NetFirewallRule -DisplayName "NAS 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
-```
-
-### C. Access over Tailscale
-
-- From another device on your tailnet:
-  - With MagicDNS off: `http://<tailscale-ip>:8080`
-  - With MagicDNS on (Admin Console → DNS → MagicDNS): `http://<device-name>.tailnet-name.ts.net:8080`
-
-Tips
-- Set `DEBUG=False` for remote access.
-- Use strong `AUTH_USERNAME`, `AUTH_PASSWORD`, and a long `SESSION_SECRET`.
-
----
-
-## 🌍 Public Internet Access via Tailscale Funnel (Windows)
-
-Tailscale Funnel can publish your local NAS to the public Internet under an HTTPS `.ts.net` domain, without router or DNS changes.
-
-Prerequisites
-- Tailscale v1.54+ on Windows (CLI installed at `C:\Program Files\Tailscale\tailscale.exe`)
-- Funnel feature enabled for your tailnet (Admin Console → Settings → Funnel)
-- MagicDNS and HTTPS certs enabled (Admin Console → DNS → check “MagicDNS”; and in the device’s Machine page, allow HTTPS certs if prompted)
-
-1) Start the NAS locally
-```powershell
-# In your NAS folder (PowerShell)
-.\.venv\Scripts\Activate.ps1
-uvicorn hdd_browser.app.main:app --host 127.0.0.1 --port 8080
-```
-
-2) Configure Tailscale Serve (reverse proxy) to your NAS
-Use the new Serve syntax (preferred on recent Tailscale versions):
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" serve https / http://127.0.0.1:8080
-```
-This sets up an HTTPS reverse proxy from the device’s `.ts.net` name to your local NAS.
-
-3) Turn on Funnel (expose to the public Internet)
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" funnel 443 on
-```
-
-4) Verify status and URL
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" serve status
-```
-You should see a public URL like:
-```
-https://<your-device>.<your-tailnet>.ts.net/
-```
-Open it from any browser on the Internet. Tailscale provisions a valid Let’s Encrypt certificate automatically.
-
-Notes
-- If `funnel` fails: ensure Funnel is enabled in the Admin Console and update to the latest Tailscale client. You may need admin rights in PowerShell.
-- Fullscreen or other advanced UI features are unrelated; Funnel only handles public routing and TLS.
-- To disable Funnel later:
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" funnel 443 off
-```
-- To remove the Serve mapping:
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" serve reset
-```
-
-Alternative (older syntax)
-Some older versions use set‑path:
-```powershell
-& "C:\Program Files\Tailscale\tailscale.exe" serve --set-path / http://127.0.0.1:8080
-& "C:\Program Files\Tailscale\tailscale.exe" funnel on
-```
-
-Custom domain?
-- Funnel serves on your `.ts.net` name. For a custom domain, place a traditional reverse proxy (e.g., nginx/traefik) in front of your NAS or use a different tunneling provider that supports custom DNS on Windows.
-
----
-
-## 🧰 Run NAS as a Windows Service (optional)
-
-Use [NSSM](https://nssm.cc/) (Non‑Sucking Service Manager) to run Uvicorn as a service:
-
-1) Install NSSM and open an elevated PowerShell
-2) Create the service:
-```powershell
-nssm install NAS
-# GUI:
-# Application: C:\Path\To\NAS\.venv\Scripts\uvicorn.exe
-# Arguments:   hdd_browser.app.main:app --host 127.0.0.1 --port 8080
-# Startup dir: C:\Path\To\NAS
-```
-3) Set environment variables in the NSSM “Environment” field or via System → Advanced → Environment Variables
-4) Start the service:
-```powershell
-nssm start NAS
-```
-Pair with Tailscale Serve + Funnel as above to publish it.
-
----
-
-## 🔒 Security
-
-- Only public paths (`/auth/login`, `/static/*`) are open; everything else requires a valid session.
-- Session cookies are signed (`itsdangerous`); provide a long `SESSION_SECRET`.
-- Path traversal is blocked via safe path joining.
-
----
-
-## 📡 API (Authenticated)
-
-Key endpoints:
-- `GET /api/drives` – list drives
-- `GET /api/list?drive_id&rel_path` – list directory contents
-- `GET /api/preview?drive_id&rel_path` – light preview/metadata
-- `GET /api/download?drive_id&rel_path` – download a file
-- `GET /api/stream?drive_id&rel_path` – range‑enabled streaming (audio/video)
-- `GET /api/search?drive_id&q` – recursive search
-- `POST /api/upload` – upload file(s) (if enabled)
-- `POST /api/delete` – delete file/folder (if enabled; folder can be recursive)
-- `GET /api/thumb?drive_id&rel_path&size=...` – thumbnail
-- `GET /api/render_image?drive_id&rel_path&max_dim=...` – server‑sized image
-
----
-
-## 🧠 Tips
-
-- Use `ALLOWED_ROOTS` to confine browsing to specific folders.
-- For HEIC images, ensure `pillow-heif` is installed (already in requirements).
-- Video thumbnails/posters need `ffmpeg` available in PATH (or set `FFMPEG_PATH`).
-- If you’re air‑gapped, self‑host the viewer libraries and set a local vendor base.
-
----
-
-## 🧱 Project Structure (simplified)
-
-```
-NAS/
-├─ hdd_browser/
-│  ├─ app/
-│  │  ├─ main.py               # FastAPI app entry
-│  │  ├─ auth.py               # login/session
-│  │  ├─ config.py             # env & settings
-│  │  ├─ security.py           # public/private path rules
-│  │  ├─ drive_discovery.py    # drive/mount detection
-│  │  ├─ file_ops.py           # core file operations
-│  │  ├─ thumbnailer.py        # thumbs/posters
-│  │  ├─ heic_init.py          # HEIC support
-│  │  ├─ templates/            # Jinja2 templates
-│  │  └─ static/
-│  │     ├─ css/
-│  │     └─ js/                # frontend (viewers & UI)
-│  └─ requirements.txt
-└─ README.md
-```
-
----
-
-## ⚠️ Known Limitations
-
-- PowerPoint formats (PPT/PPTX) are not supported in‑browser; use Open/Download.
-- MKV playback depends on your browser’s codec support.
-- Very large text/CSV files are truncated in preview for performance.
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
