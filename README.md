@@ -1,5 +1,5 @@
 
-# NAS (HDD Browser) – Fast, simple web UI to browse, preview, upload, and manage files
+# NAS (Network Attached Storage) – Fast, simple web UI to browse, preview, upload, and manage files
 
 A lightweight FastAPI-based web UI to browse local or mounted disks, preview and stream files, generate thumbnails, and optionally upload/delete content. Works natively on Windows/macOS/Linux and with Conda. Supports single-user or multi-user auth with roles. Can be accessed over your LAN or securely over [Tailscale](https://tailscale.com) (Serve/Funnel).
 
