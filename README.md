@@ -8,7 +8,6 @@ This guide walks you through a complete, from-scratch installation with minute d
 
 ## Screenshots
 
-> Place the PNG files at docs/images/ as named below. If you don’t have them yet, create the folder and add your own screenshots with the same filenames.
 
 | Login | Browse | Admin |
 |---|---|---|
